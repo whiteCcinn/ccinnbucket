@@ -92,6 +92,6 @@ final class WindowSession {
 /// User-facing text for any error.
 func describe(_ error: any Error) -> String {
     if let error = error as? StorageError { return error.description }
-    if let error = error as? LocalizedError, let description = error.errorDescription { return description }
+    if let error = error as? any LocalizedError, let description = error.errorDescription { return description }
     return error.localizedDescription
 }

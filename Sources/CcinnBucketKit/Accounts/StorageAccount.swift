@@ -1,6 +1,33 @@
 import Foundation
 import StorageKit
 
+/// Whether (and how) AI clients may use an account through the MCP server.
+public enum MCPAccess: String, Codable, CaseIterable, Identifiable, Sendable, Comparable {
+    case disabled
+    case readOnly
+    case readWrite
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .disabled: "Off"
+        case .readOnly: "Read-only"
+        case .readWrite: "Read & write"
+        }
+    }
+
+    private var rank: Int {
+        switch self {
+        case .disabled: 0
+        case .readOnly: 1
+        case .readWrite: 2
+        }
+    }
+
+    public static func < (lhs: MCPAccess, rhs: MCPAccess) -> Bool { lhs.rank < rhs.rank }
+}
+
 public enum AccountColor: String, Codable, CaseIterable, Identifiable, Sendable {
     case none, red, orange, yellow, green, mint, teal, cyan, blue, indigo, purple, pink, gray
     public var id: String { rawValue }
@@ -138,6 +165,8 @@ public struct StorageAccount: Codable, Identifiable, Hashable, Sendable {
     /// Refuse every operation that changes data.
     public var isReadOnly: Bool
     public var partSizeMiB: Int
+    /// AI access through the MCP server (off unless the user opts in).
+    public var mcpAccess: MCPAccess
     public var createdAt: Date
     public var lastConnectedAt: Date?
 
@@ -159,13 +188,14 @@ public struct StorageAccount: Codable, Identifiable, Hashable, Sendable {
         defaultBucket = ""
         isReadOnly = false
         partSizeMiB = Self.defaultPartSizeMiB
+        mcpAccess = .disabled
         createdAt = Date()
         lastConnectedAt = nil
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, color, isFavorite, kind, endpoint, region, addressing, ossEndpointKind, ossSignatureVersion, usesCustomDomain,
-             customDomainBucket, listAPIVersion, accessKeyID, defaultBucket, isReadOnly, partSizeMiB, createdAt, lastConnectedAt
+             customDomainBucket, listAPIVersion, accessKeyID, defaultBucket, isReadOnly, partSizeMiB, mcpAccess, createdAt, lastConnectedAt
     }
 
     /// Lenient decoding: fields added in later versions fall back to the preset defaults.
@@ -188,6 +218,7 @@ public struct StorageAccount: Codable, Identifiable, Hashable, Sendable {
         defaultBucket = try container.decodeIfPresent(String.self, forKey: .defaultBucket) ?? ""
         isReadOnly = try container.decodeIfPresent(Bool.self, forKey: .isReadOnly) ?? false
         partSizeMiB = try container.decodeIfPresent(Int.self, forKey: .partSizeMiB) ?? Self.defaultPartSizeMiB
+        mcpAccess = (try? container.decodeIfPresent(MCPAccess.self, forKey: .mcpAccess)) ?? .disabled
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         lastConnectedAt = try container.decodeIfPresent(Date.self, forKey: .lastConnectedAt)
     }

@@ -146,6 +146,14 @@ public struct VersionPage: Sendable, Hashable {
     public var isTruncated: Bool
     public var nextKeyMarker: String?
     public var nextVersionIDMarker: String?
+
+    public init(versions: [ObjectVersion], commonPrefixes: [String], isTruncated: Bool, nextKeyMarker: String?, nextVersionIDMarker: String?) {
+        self.versions = versions
+        self.commonPrefixes = commonPrefixes
+        self.isTruncated = isTruncated
+        self.nextKeyMarker = nextKeyMarker
+        self.nextVersionIDMarker = nextVersionIDMarker
+    }
 }
 
 public struct MultipartUploadInfo: Sendable, Hashable, Identifiable {
@@ -170,6 +178,14 @@ public struct MultipartUploadsPage: Sendable, Hashable {
     public var isTruncated: Bool
     public var nextKeyMarker: String?
     public var nextUploadIDMarker: String?
+
+    public init(uploads: [MultipartUploadInfo], commonPrefixes: [String], isTruncated: Bool, nextKeyMarker: String?, nextUploadIDMarker: String?) {
+        self.uploads = uploads
+        self.commonPrefixes = commonPrefixes
+        self.isTruncated = isTruncated
+        self.nextKeyMarker = nextKeyMarker
+        self.nextUploadIDMarker = nextUploadIDMarker
+    }
 }
 
 public struct UploadedPart: Codable, Sendable, Hashable {
@@ -382,4 +398,10 @@ public struct ObjectData: Sendable, Hashable {
     /// Total object size (from `Content-Range` for ranged requests).
     public var totalSize: Int64
     public var isPartial: Bool { Int64(data.count) < totalSize }
+
+    public init(data: Data, metadata: ObjectMetadata, totalSize: Int64) {
+        self.data = data
+        self.metadata = metadata
+        self.totalSize = totalSize
+    }
 }

@@ -108,5 +108,6 @@ struct AccountTests {
         #expect(accounts.first?.addressing == .path)
         #expect(accounts.first?.isReadOnly == false)
         #expect(accounts.first?.partSizeMiB == StorageAccount.defaultPartSizeMiB)
+        #expect(accounts.first?.mcpAccess == .disabled, "AI access stays off for accounts saved before MCP existed")
     }
 }

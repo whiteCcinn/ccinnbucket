@@ -9,6 +9,14 @@ public struct StorageCapabilities: Sendable, Hashable {
     public var maxSingleCopySize: Int64
     /// Longest presigned-URL lifetime, in seconds.
     public var maxPresignExpiry: Int
+
+    public init(provider: StorageProvider, storageClasses: [String], defaultStorageClass: String, maxSingleCopySize: Int64, maxPresignExpiry: Int) {
+        self.provider = provider
+        self.storageClasses = storageClasses
+        self.defaultStorageClass = defaultStorageClass
+        self.maxSingleCopySize = maxSingleCopySize
+        self.maxPresignExpiry = maxPresignExpiry
+    }
 }
 
 /// Provider-neutral bucket and object operations. Implemented by `ObjectStorageClient` for S3 and OSS,
