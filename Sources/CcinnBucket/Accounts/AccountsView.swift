@@ -152,6 +152,9 @@ private struct AccountRow: View {
                 Text(account.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 0)
+            if account.mcpAccess != .disabled {
+                Image(systemName: "sparkles").foregroundStyle(.purple).imageScale(.small).help("AI access via MCP: \(account.mcpAccess.title)")
+            }
             if account.isReadOnly { Image(systemName: "lock.fill").foregroundStyle(.orange).imageScale(.small).help("Read-only") }
             if account.isFavorite { Image(systemName: "star.fill").foregroundStyle(.yellow).imageScale(.small) }
         }
@@ -225,6 +228,7 @@ struct AccountEditorView: View {
                         if draft.account.kind.provider == .oss { ossSection }
                         credentialsSection
                         optionsSection
+                        aiAccessSection
                     }
                     .formStyle(.grouped)
                     .scrollDisabled(true)
@@ -372,6 +376,34 @@ struct AccountEditorView: View {
             Picker("Multipart part size", selection: $draft.account.partSizeMiB) {
                 ForEach([5, 8, 16, 32, 64, 128, 256], id: \.self) { Text("\($0) MiB").tag($0) }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var aiAccessSection: some View {
+        Section {
+            Picker("AI access via MCP", selection: $draft.account.mcpAccess) {
+                ForEach(MCPAccess.allCases) { Text($0.title).tag($0) }
+            }
+        } header: {
+            Text("AI Access")
+        } footer: {
+            Text(aiFooter)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var aiFooter: String {
+        switch draft.account.mcpAccess {
+        case .disabled:
+            return "AI tools (Claude Code, Codex, Claude Desktop…) cannot use this account. Set up the MCP server in Settings → MCP."
+        case .readOnly:
+            return "AI tools may list buckets and objects and read text objects (bounded). They cannot change anything."
+        case .readWrite:
+            return draft.account.isReadOnly ? "This account is read-only, so AI access is capped at read-only."
+                : "AI tools may also write text objects, delete objects by exact key, copy objects and create presigned links. Every call is logged."
         }
     }
 

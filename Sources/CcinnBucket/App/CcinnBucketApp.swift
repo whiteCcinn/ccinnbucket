@@ -21,7 +21,7 @@ struct CcinnBucketApp: App {
 
         Settings {
             SettingsView()
-                .frame(width: 480)
+                .frame(width: 640, height: 560)
                 .tint(Theme.accent)
         }
     }
@@ -307,6 +307,17 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
 }
 
 struct SettingsView: View {
+    var body: some View {
+        TabView {
+            GeneralSettingsView()
+                .tabItem { Label("General", systemImage: "gearshape") }
+            MCPSettingsView(store: AppServices.shared.accounts)
+                .tabItem { Label("MCP", systemImage: "sparkles") }
+        }
+    }
+}
+
+struct GeneralSettingsView: View {
     @AppStorage("appearance") private var appearance = AppearancePreference.system.rawValue
 
     var body: some View {
@@ -328,6 +339,80 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(.vertical, 8)
+    }
+}
+
+/// Settings → MCP: explains AI access, edits per-account access and offers copyable client configuration.
+struct MCPSettingsView: View {
+    let store: AccountStore
+    @State private var copied: String?
+
+    static var executablePath: String {
+        Bundle.main.executableURL?.path ?? "/Applications/CcinnBucket.app/Contents/MacOS/CcinnBucket"
+    }
+
+    private var snippets: [(title: String, text: String)] {
+        let path = Self.executablePath
+        let escaped = path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        return [
+            ("Claude Code", "claude mcp add ccinnbucket -- \"\(path)\" mcp"),
+            ("Codex (~/.codex/config.toml)", "[mcp_servers.ccinnbucket]\ncommand = \"\(escaped)\"\nargs = [\"mcp\"]"),
+            ("Claude Desktop / JSON", "{\n  \"mcpServers\": {\n    \"ccinnbucket\": {\n      \"command\": \"\(escaped)\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}"),
+        ]
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Text("CcinnBucket includes a Model Context Protocol server, so AI tools such as Claude Code, Codex and Claude Desktop can list buckets and read objects through your saved accounts. Accounts are off until you enable them below; read-only is the safe default. Every call is logged to mcp-audit.jsonl in the accounts folder.")
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Section("Accounts") {
+                if store.accounts.isEmpty {
+                    Text("No saved accounts yet.").foregroundStyle(.secondary)
+                }
+                ForEach(store.accounts) { account in
+                    Picker(selection: Binding(get: { account.mcpAccess }, set: { access in
+                        var updated = account
+                        updated.mcpAccess = access
+                        _ = try? store.save(updated, secretAccessKey: store.secretAccessKey(for: account), sessionToken: store.sessionToken(for: account))
+                    })) {
+                        ForEach(MCPAccess.allCases) { Text($0.title).tag($0) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(account.displayName)
+                            Text(account.isReadOnly ? "Read-only account (AI access capped at read-only)" : account.summary)
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                }
+            }
+            Section("Connect an AI client") {
+                ForEach(snippets, id: \.title) { snippet in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(snippet.title).font(.callout.weight(.medium))
+                            Spacer()
+                            Button(copied == snippet.title ? "Copied" : "Copy") {
+                                Pasteboard.copy(snippet.text)
+                                copied = snippet.title
+                            }
+                        }
+                        Text(snippet.text)
+                            .font(Theme.monospacedSmall)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: Theme.Metrics.smallCornerRadius))
+                    }
+                }
+                Text("Add --read-only after mcp to cap every account at read-only, or --profile \"<account>\" to pick a default account.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 
