@@ -1,0 +1,50 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please do **not** include access keys, secret keys, session tokens or presigned URLs.
+        Security issues should be reported privately (see SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Connect to …
+        2. Open bucket … / prefix …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: CcinnBucket version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Storage service, region and endpoint type
+      placeholder: "Amazon S3 eu-west-1 / MinIO 2025-07 / Alibaba Cloud OSS cn-hangzhou (internal endpoint, V4)"
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version and Mac type
+      placeholder: "macOS 15.2, Apple silicon"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages or screenshots
+      description: Error codes and request IDs from the error message are helpful. Remove any credentials first.

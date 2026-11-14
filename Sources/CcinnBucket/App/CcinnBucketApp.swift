@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// Per-window root: account manager, progress, or workspace.
 struct RootView: View {
     @State private var session = WindowSession()
+    @Environment(\.openSettings) private var openSettings
     private let store = AppServices.shared.accounts
 
     var body: some View {
@@ -75,7 +76,14 @@ struct RootView: View {
         .focusedSceneValue(\.windowSession, session)
         .navigationTitle(windowTitle)
         .onDisappear { session.disconnect() }
-        .task { LaunchArguments.consume(into: session, store: store) }
+        .task {
+            LaunchArguments.consume(into: session, store: store)
+            if let pane = LaunchArguments.value("--open-settings") {
+                SettingsDeepLink.pane = pane
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                openSettings()
+            }
+        }
     }
 
     private var phaseKey: Int {
@@ -273,12 +281,6 @@ enum SnapshotTool {
         }
         let delay = LaunchArguments.value("--snapshot-delay").flatMap(Double.init) ?? 6
         let quit = LaunchArguments.has("--quit-after-snapshot")
-        if let pane = LaunchArguments.value("--open-settings") {
-            SettingsDeepLink.pane = pane
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }
-        }
         let wantedTitle = LaunchArguments.value("--snapshot-window")
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             let candidates = NSApp.windows.filter { $0.isVisible && $0.sheetParent == nil && $0.frame.width > 400 }
