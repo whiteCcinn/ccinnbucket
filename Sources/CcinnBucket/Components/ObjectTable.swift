@@ -107,15 +107,15 @@ struct ObjectTable: NSViewRepresentable {
         }
 
         private var columnSpecs: [ColumnSpec] {
-            var specs = [ColumnSpec(id: "name", title: "Name", width: 420, minWidth: 160, sort: .name, alignment: .left)]
+            var specs = [ColumnSpec(id: "name", title: "Name", width: 300, minWidth: 160, sort: .name, alignment: .left)]
             if parent.showsVersions {
-                specs.append(ColumnSpec(id: "version", title: "Version ID", width: 200, minWidth: 80, sort: nil, alignment: .left))
+                specs.append(ColumnSpec(id: "version", title: "Version ID", width: 180, minWidth: 80, sort: nil, alignment: .left))
                 specs.append(ColumnSpec(id: "latest", title: "Latest", width: 60, minWidth: 50, sort: nil, alignment: .center))
             }
             specs += [
                 ColumnSpec(id: "size", title: "Size", width: 90, minWidth: 60, sort: .size, alignment: .right),
-                ColumnSpec(id: "modified", title: "Last Modified", width: 170, minWidth: 100, sort: .modified, alignment: .left),
-                ColumnSpec(id: "class", title: "Storage Class", width: 130, minWidth: 70, sort: .storageClass, alignment: .left),
+                ColumnSpec(id: "modified", title: "Last Modified", width: 150, minWidth: 100, sort: .modified, alignment: .left),
+                ColumnSpec(id: "class", title: "Storage Class", width: 110, minWidth: 70, sort: .storageClass, alignment: .left),
                 ColumnSpec(id: "kind", title: "Kind", width: 80, minWidth: 50, sort: .kind, alignment: .left),
             ]
             return specs

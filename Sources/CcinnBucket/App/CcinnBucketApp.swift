@@ -29,9 +29,14 @@ struct CcinnBucketApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Behave like a regular app when launched from `swift run` (no bundle).
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        if SnapshotTool.isRequested, !LaunchArguments.has("--snapshot-visible") {
+            // Visual checks run invisibly: no Dock icon, no focus stealing, transparent windows.
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            // Behave like a regular app when launched from `swift run` (no bundle).
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         NSWindow.allowsAutomaticWindowTabbing = false
         if let scheme = LaunchArguments.appearanceOverride {
             NSApp.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
@@ -208,7 +213,7 @@ enum LaunchArguments {
         if has("--transfers") { workspace.showTransfers = true }
     }
 
-    private static func waitUntil(timeout: TimeInterval = 20, _ condition: @MainActor () -> Bool) async {
+    private static func waitUntil(timeout: TimeInterval = 60, _ condition: @MainActor () -> Bool) async {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition(), Date() < deadline { try? await Task.sleep(nanoseconds: 100_000_000) }
     }
@@ -219,6 +224,7 @@ enum LaunchArguments {
         var minio = StorageAccount(kind: .minio, name: "Local MinIO", accessKeyID: value("--access-key") ?? "ccinnbucket", color: .cyan)
         minio.endpoint = value("--connect") ?? "http://127.0.0.1:19900"
         minio.isFavorite = true
+        minio.mcpAccess = .readOnly
         minio.lastConnectedAt = Date()
         var aws = StorageAccount(kind: .amazonS3, name: "Production (S3)", accessKeyID: "AKIAIOSFODNN7EXAMPLE", color: .orange)
         aws.region = "eu-central-1"
@@ -226,6 +232,7 @@ enum LaunchArguments {
         aws.lastConnectedAt = Date().addingTimeInterval(-3_600)
         var oss = StorageAccount(kind: .alibabaOSS, name: "Media (OSS Hangzhou)", accessKeyID: "LTAI5tEXAMPLEaccessKey", color: .pink)
         oss.region = "cn-hangzhou"
+        oss.mcpAccess = .readWrite
         var r2 = StorageAccount(kind: .cloudflareR2, name: "Assets (R2)", accessKeyID: "r2examplekey0123456789", color: .indigo)
         r2.endpoint = "https://0123456789abcdef.r2.cloudflarestorage.com"
         var archive = StorageAccount(kind: .wasabi, name: "Cold archive", accessKeyID: "WASABIEXAMPLEKEY", color: .green)
@@ -241,6 +248,8 @@ enum LaunchArguments {
 @MainActor
 enum SettingsDeepLink {
     static var tab: BucketSettingsView.Tab?
+    /// Settings pane to show first ("general" or "mcp").
+    static var pane: String?
 
     static func take() -> BucketSettingsView.Tab? {
         defer { tab = nil }
@@ -252,13 +261,29 @@ enum SettingsDeepLink {
 /// attached sheet, composited on top) into a PNG. Needs no screen-recording permission.
 @MainActor
 enum SnapshotTool {
+    nonisolated static var isRequested: Bool { LaunchArguments.value("--snapshot") != nil }
+
     static func scheduleIfRequested() {
         guard let path = LaunchArguments.value("--snapshot") else { return }
+        if !LaunchArguments.has("--snapshot-visible") {
+            // Keep every window (and sheet) transparent so the check never disturbs the user; views still render.
+            Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { _ in
+                MainActor.assumeIsolated { for window in NSApp.windows where window.alphaValue != 0 { window.alphaValue = 0 } }
+            }
+        }
         let delay = LaunchArguments.value("--snapshot-delay").flatMap(Double.init) ?? 6
         let quit = LaunchArguments.has("--quit-after-snapshot")
+        if let pane = LaunchArguments.value("--open-settings") {
+            SettingsDeepLink.pane = pane
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+        }
+        let wantedTitle = LaunchArguments.value("--snapshot-window")
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            if let window = NSApp.windows.first(where: { $0.isVisible && $0.sheetParent == nil && $0.frame.width > 400 }),
-               let data = render(window) {
+            let candidates = NSApp.windows.filter { $0.isVisible && $0.sheetParent == nil && $0.frame.width > 400 }
+            let chosen = wantedTitle.flatMap { title in candidates.first { $0.title.localizedCaseInsensitiveContains(title) } } ?? candidates.first
+            if let window = chosen, let data = render(window) {
                 try? data.write(to: URL(fileURLWithPath: path))
             }
             if quit { NSApp.terminate(nil) }
@@ -284,7 +309,23 @@ enum SnapshotTool {
         NSColor.black.withAlphaComponent(0.12).setFill()
         NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
         let origin = NSPoint(x: sheet.frame.minX - window.frame.minX, y: sheet.frame.minY - window.frame.minY)
-        overlay.draw(in: NSRect(origin: origin, size: sheetView.bounds.size))
+        let sheetRect = NSRect(origin: origin, size: sheetView.bounds.size)
+        // Sheets are separate windows: give the composite their opaque background and shadow.
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+        shadow.shadowBlurRadius = 18
+        shadow.shadowOffset = NSSize(width: 0, height: -6)
+        shadow.set()
+        var background = NSColor.windowBackgroundColor
+        sheet.effectiveAppearance.performAsCurrentDrawingAppearance { background = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? .windowBackgroundColor }
+        background.setFill()
+        NSBezierPath(roundedRect: sheetRect, xRadius: 10, yRadius: 10).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: sheetRect, xRadius: 10, yRadius: 10).addClip()
+        overlay.draw(in: sheetRect)
+        NSGraphicsContext.restoreGraphicsState()
         composite.unlockFocus()
         guard let tiff = composite.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
         return rep.representation(using: .png, properties: [:])
@@ -307,12 +348,16 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
 }
 
 struct SettingsView: View {
+    @State private var pane = SettingsDeepLink.pane == "mcp" ? "mcp" : "general"
+
     var body: some View {
-        TabView {
+        TabView(selection: $pane) {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag("general")
             MCPSettingsView(store: AppServices.shared.accounts)
                 .tabItem { Label("MCP", systemImage: "sparkles") }
+                .tag("mcp")
         }
     }
 }

@@ -268,7 +268,7 @@ struct AppLogo: View {
                                               Color(red: 0.05, green: 0.20, blue: 0.42)],
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
             BucketGlyph()
-                .fill(.white.opacity(0.95))
+                .fill(.white.opacity(0.95), style: FillStyle(eoFill: true))
                 .frame(width: size * 0.56, height: size * 0.56)
                 .offset(y: size * 0.03)
                 .shadow(color: .black.opacity(0.25), radius: size * 0.04, y: size * 0.02)

@@ -17,6 +17,8 @@ struct InspectorView: View {
             } else {
                 ContentUnavailableView("No Selection", systemImage: "sidebar.right",
                                        description: Text("Select an object to see its details, preview and metadata."))
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(minWidth: 280)
@@ -152,7 +154,7 @@ private struct ObjectInspector: View {
     private func overview(_ metadata: ObjectMetadata) -> some View {
         Card(title: "Overview", systemImage: "info.circle") {
             var items: [(String, String)] = [
-                ("Size", "\(SizeFormat.bytes(metadata.size)) (\(metadata.size.formatted()) bytes)"),
+                ("Size", metadata.size < 1_000 ? "\(metadata.size.formatted()) bytes" : "\(SizeFormat.bytes(metadata.size)) (\(metadata.size.formatted()) bytes)"),
                 ("Modified", Format.date(metadata.lastModified)),
                 ("Storage class", metadata.storageClass ?? browser.storage.capabilities.defaultStorageClass),
                 ("ETag", metadata.eTag ?? "—"),

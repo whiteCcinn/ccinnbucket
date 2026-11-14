@@ -136,7 +136,7 @@ struct BucketSettingsView: View {
             case .failed:
                 ErrorBanner(message: document.message ?? "Could not read the configuration.")
             default:
-                ForEach(Array(document.items.enumerated()), id: \.offset) { _, item in
+                ForEach(Array((kind == .versioning ? [] : document.items).enumerated()), id: \.offset) { _, item in
                     Card(title: item.title, systemImage: symbol(for: kind)) {
                         KeyValueList(items: item.fields.map { ($0.label, $0.value) })
                     }

@@ -23,12 +23,8 @@ struct AccountsView: View {
         .onChange(of: selection) { _, newValue in
             if let account = store.account(id: newValue) { draft = AccountDraft(account: account, store: store) }
         }
-        .onAppear {
-            if draft == nil, let first = store.favorites.first ?? store.recents.first ?? store.others.first {
-                selection = first.id
-                draft = AccountDraft(account: first, store: store)
-            }
-        }
+        .onAppear(perform: selectFirstIfNeeded)
+        .onChange(of: store.accounts.count) { _, _ in selectFirstIfNeeded() }
         .sheet(isPresented: $showingImport) {
             ImportCredentialsSheet(store: store) { imported in
                 if let first = imported.first { selection = first.id }
@@ -126,6 +122,12 @@ struct AccountsView: View {
         } else {
             WelcomeView(onNew: newAccount, onImport: { showingImport = true })
         }
+    }
+
+    private func selectFirstIfNeeded() {
+        guard draft == nil, let first = store.favorites.first ?? store.recents.first ?? store.others.first else { return }
+        selection = first.id
+        draft = AccountDraft(account: first, store: store)
     }
 
     private func newAccount() {
@@ -338,22 +340,34 @@ struct AccountEditorView: View {
     @ViewBuilder
     private var credentialsSection: some View {
         Section {
-            TextField("Access key ID", text: $draft.account.accessKeyID)
-                .font(Theme.monospacedSmall)
-            HStack {
-                Group {
-                    if showSecret {
-                        TextField("Secret access key", text: $draft.secretAccessKey)
-                    } else {
-                        SecureField("Secret access key", text: $draft.secretAccessKey)
-                    }
-                }
-                .font(Theme.monospacedSmall)
-                Button { showSecret.toggle() } label: { Image(systemName: showSecret ? "eye.slash" : "eye") }
-                    .buttonStyle(.borderless)
+            LabeledContent("Access key ID") {
+                TextField("Access key ID", text: $draft.account.accessKeyID)
+                    .labelsHidden()
+                    .multilineTextAlignment(.trailing)
+                    .font(Theme.monospacedSmall)
             }
-            SecureField("Session token (STS, optional)", text: $draft.sessionToken)
-                .font(Theme.monospacedSmall)
+            LabeledContent("Secret access key") {
+                HStack {
+                    Group {
+                        if showSecret {
+                            TextField("Secret access key", text: $draft.secretAccessKey)
+                        } else {
+                            SecureField("Secret access key", text: $draft.secretAccessKey)
+                        }
+                    }
+                    .labelsHidden()
+                    .multilineTextAlignment(.trailing)
+                    .font(Theme.monospacedSmall)
+                    Button { showSecret.toggle() } label: { Image(systemName: showSecret ? "eye.slash" : "eye") }
+                        .buttonStyle(.borderless)
+                }
+            }
+            LabeledContent("Session token (STS)") {
+                SecureField("Session token", text: $draft.sessionToken, prompt: Text("optional"))
+                    .labelsHidden()
+                    .multilineTextAlignment(.trailing)
+                    .font(Theme.monospacedSmall)
+            }
         } header: {
             Text("Credentials")
         } footer: {
