@@ -11,6 +11,16 @@ public struct UploadCheckpoint: Codable, Sendable, Hashable {
     public var fileModification: Date?
     public var parts: [UploadedPart]
 
+    public init(bucket: String, key: String, uploadID: String, partSize: Int64, fileSize: Int64, fileModification: Date?, parts: [UploadedPart]) {
+        self.bucket = bucket
+        self.key = key
+        self.uploadID = uploadID
+        self.partSize = partSize
+        self.fileSize = fileSize
+        self.fileModification = fileModification
+        self.parts = parts
+    }
+
     public var uploadedBytes: Int64 { parts.reduce(0) { $0 + $1.size } }
 }
 
