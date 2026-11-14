@@ -309,11 +309,16 @@ struct OperationTests {
         let transport = FakeTransport(responses: [HTTPResponse(statusCode: 200),
                                                   Fixtures.xml("<Tagging><TagSet><Tag><Key>env</Key><Value>demo &amp; test</Value></Tag></TagSet></Tagging>")])
         let client = Fixtures.client(Fixtures.minio, transport: transport)
-        try await client.putObjectTags(bucket: "b", key: "k", versionID: nil, tags: [ObjectTag(key: "env", value: "demo & test")])
-        #expect(String(decoding: transport.requests[0].body ?? Data(), as: UTF8.self).contains("<Value>demo &amp; test</Value>"))
+        try await client.putObjectTags(bucket: "b", key: "k", versionID: nil, tags: [ObjectTag(key: "env", value: "demo + test")])
+        #expect(String(decoding: transport.requests[0].body ?? Data(), as: UTF8.self).contains("<Value>demo + test</Value>"))
         #expect(try await client.getObjectTags(bucket: "b", key: "k", versionID: nil) == [ObjectTag(key: "env", value: "demo & test")])
         await #expect(throws: StorageError.self) {
             try await client.putObjectTags(bucket: "b", key: "k", versionID: nil, tags: (0..<11).map { ObjectTag(key: "k\($0)", value: "") })
         }
+        await #expect(throws: StorageError.self) {
+            try await client.putObjectTags(bucket: "b", key: "k", versionID: nil, tags: [ObjectTag(key: "env", value: "a & b")])
+        }
+        #expect(MetadataRules.isValidTagText("team: storage/äß-1 @ ccinn+x=y.z_w"))
+        #expect(!MetadataRules.isValidTagText("semi;colon"))
     }
 }

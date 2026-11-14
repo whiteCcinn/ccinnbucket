@@ -176,8 +176,8 @@ struct MinIOIntegrationTests {
             _ = try await client.putObject(bucket: bucket, key: key, body: Data("hello".utf8),
                                            options: ObjectWriteOptions(contentType: "application/octet-stream", userMetadata: ["owner": "ccinn"]),
                                            progress: nil)
-            try await client.putObjectTags(bucket: bucket, key: key, versionID: nil, tags: [ObjectTag(key: "env", value: "it & test")])
-            #expect(try await client.getObjectTags(bucket: bucket, key: key, versionID: nil) == [ObjectTag(key: "env", value: "it & test")])
+            try await client.putObjectTags(bucket: bucket, key: key, versionID: nil, tags: [ObjectTag(key: "env", value: "it + test/1")])
+            #expect(try await client.getObjectTags(bucket: bucket, key: key, versionID: nil) == [ObjectTag(key: "env", value: "it + test/1")])
 
             let before = try await client.headObject(bucket: bucket, key: key, versionID: nil)
             var options = before.writeOptions
@@ -339,11 +339,15 @@ struct MinIOIntegrationTests {
         let client = IT.client()
         let url = try await client.presignedURL(bucket: "ccinn-demo", key: "docs/README.md", versionID: nil, method: "GET", expires: 1,
                                                 responseContentDisposition: "attachment; filename=\"readme.md\"")
-        let (_, first) = try await URLSession.shared.data(from: url)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(configuration: configuration)
+        let (_, first) = try await session.data(from: url)
         #expect((first as? HTTPURLResponse)?.statusCode == 200)
         #expect((first as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?.contains("readme.md") == true)
         try await Task.sleep(nanoseconds: 2_500_000_000)
-        let (_, expired) = try await URLSession.shared.data(from: url)
+        let (_, expired) = try await session.data(from: url)
         #expect((expired as? HTTPURLResponse)?.statusCode == 403)
     }
 }

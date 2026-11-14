@@ -462,6 +462,14 @@ extension ObjectStorageClient {
 
 /// Validation of user-supplied metadata and tags (also enforced in the UI for friendlier messages).
 public enum MetadataRules {
+    /// S3/OSS tag character set: Unicode letters and digits, spaces and `+ - = . _ : / @`.
+    public static func isValidTagText(_ text: String) -> Bool {
+        text.unicodeScalars.allSatisfy { scalar in
+            CharacterSet.letters.contains(scalar) || CharacterSet.decimalDigits.contains(scalar) || scalar == " "
+                || "+-=._:/@".unicodeScalars.contains(scalar)
+        }
+    }
+
     public static func validate(key: String, value: String) throws {
         guard !key.isEmpty, key.utf8.count <= 128,
               key.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" || $0 == ".") }) else {
@@ -480,8 +488,8 @@ public enum MetadataRules {
             guard !tag.key.isEmpty, tag.key.count <= 128, tag.value.count <= 256 else {
                 throw StorageError.invalidRequest("Tag keys must be 1–128 characters and values at most 256 characters.")
             }
-            guard XMLWriter.isRepresentable(tag.key), XMLWriter.isRepresentable(tag.value) else {
-                throw StorageError.invalidRequest("Tags cannot contain control characters.")
+            guard isValidTagText(tag.key), isValidTagText(tag.value) else {
+                throw StorageError.invalidRequest("Tags may contain only letters, digits, spaces and + - = . _ : / @ (got “\(tag.key)=\(tag.value)”).")
             }
         }
     }
