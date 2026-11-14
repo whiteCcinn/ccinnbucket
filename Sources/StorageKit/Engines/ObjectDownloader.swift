@@ -43,10 +43,22 @@ public struct ObjectDownloader: Sendable {
         destination.deletingLastPathComponent().appendingPathComponent(destination.lastPathComponent + sidecarSuffix)
     }
 
+    /// Larger sizes reported by a server are treated as bogus (protects allocation and arithmetic).
+    public static let maximumObjectSize: Int64 = 50 << 40
+
     /// Removes leftovers of an interrupted download (used when the user cancels instead of pausing).
+    /// Leftovers that a running download holds (locked) are never touched.
     public static func discardPartial(for destination: URL) {
-        try? FileManager.default.removeItem(at: partialURL(for: destination))
-        try? FileManager.default.removeItem(at: sidecarURL(for: destination))
+        let partial = partialURL(for: destination)
+        let descriptor = open(partial.path, O_RDWR | O_CLOEXEC)
+        if descriptor >= 0 {
+            defer { close(descriptor) }
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return }
+            unlink(partial.path)
+            unlink(sidecarURL(for: destination).path)
+        } else {
+            unlink(sidecarURL(for: destination).path)
+        }
     }
 
     /// Downloads `key` to `destination` (replacing an existing file only after a complete download).
@@ -56,26 +68,38 @@ public struct ObjectDownloader: Sendable {
         let metadata = try await storage.headObject(bucket: bucket, key: key, versionID: versionID)
         if metadata.isDeleteMarker { throw StorageError.invalidRequest("“\(key)” is a delete marker and has no content.") }
         let size = metadata.size
+        guard (0...Self.maximumObjectSize).contains(size) else {
+            throw StorageError.invalidResponse("The server reported an implausible size (\(size) bytes) for “\(key)”.")
+        }
         let partial = Self.partialURL(for: destination)
         let sidecar = Self.sidecarURL(for: destination)
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-
-        var checkpoint = DownloadCheckpoint(bucket: bucket, key: key, versionID: versionID, eTag: metadata.eTag, size: size,
-                                            chunkSize: chunkSize, completed: [])
-        if let data = try? Data(contentsOf: sidecar), data.count < 4 << 20,
-           let saved = try? JSONDecoder().decode(DownloadCheckpoint.self, from: data),
-           saved.bucket == bucket, saved.key == key, saved.versionID == versionID, saved.eTag == metadata.eTag, saved.size == size,
-           saved.chunkSize == chunkSize, (try? partial.resourceValues(forKeys: [.fileSizeKey]).fileSize).map({ Int64($0) == size }) == true {
-            checkpoint = saved
-        } else {
-            Self.discardPartial(for: destination)
-        }
 
         let descriptor = open(partial.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
         guard descriptor >= 0 else {
             throw StorageError.localFile("Could not create “\(partial.lastPathComponent)”: \(String(cString: strerror(errno))).")
         }
         defer { close(descriptor) }
+        // One writer per destination: a second download of the same file fails instead of corrupting it.
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            throw StorageError.localFile("Another download is already writing “\(destination.lastPathComponent)”. Wait for it to finish or choose another folder.")
+        }
+
+        var checkpoint = DownloadCheckpoint(bucket: bucket, key: key, versionID: versionID, eTag: metadata.eTag, size: size,
+                                            chunkSize: chunkSize, completed: [])
+        var info = stat()
+        let partialSize = fstat(descriptor, &info) == 0 ? Int64(info.st_size) : -1
+        if let data = try? Data(contentsOf: sidecar), data.count < 4 << 20,
+           let saved = try? JSONDecoder().decode(DownloadCheckpoint.self, from: data),
+           saved.bucket == bucket, saved.key == key, saved.versionID == versionID, saved.eTag == metadata.eTag, saved.size == size,
+           saved.chunkSize == chunkSize, partialSize == size {
+            checkpoint = saved
+        } else {
+            unlink(sidecar.path)
+            guard ftruncate(descriptor, 0) == 0 else {
+                throw StorageError.localFile("Could not reset “\(partial.lastPathComponent)”: \(String(cString: strerror(errno))).")
+            }
+        }
         guard ftruncate(descriptor, off_t(size)) == 0 else {
             throw StorageError.localFile("Could not reserve \(size) bytes on disk: \(String(cString: strerror(errno))).")
         }
@@ -111,6 +135,8 @@ public struct ObjectDownloader: Sendable {
                 }
                 for _ in 0..<concurrency where addNext() {}
                 while let index = try await group.next() {
+                    // Data first, then the record that it is there: a crash never leaves a "completed" chunk unwritten.
+                    _ = fsync(descriptor)
                     let snapshot = state.withLock { current -> DownloadCheckpoint in
                         current.completed.append(index)
                         return current
@@ -120,7 +146,9 @@ public struct ObjectDownloader: Sendable {
                 }
             }
         } catch let error as StorageError where error.statusCode == 412 || error.code == "PreconditionFailed" {
-            Self.discardPartial(for: destination)
+            await writer.finish()
+            unlink(partial.path)
+            unlink(sidecar.path)
             throw StorageError(kind: .service, code: "PreconditionFailed",
                                message: "“\(key)” changed on the server during the download. Start the download again.", statusCode: 412)
         }
@@ -131,11 +159,17 @@ public struct ObjectDownloader: Sendable {
             var times = [timespec(tv_sec: seconds, tv_nsec: 0), timespec(tv_sec: seconds, tv_nsec: 0)]
             _ = futimens(descriptor, &times)
         }
+        // Only move the file we actually wrote (the path could have been replaced meanwhile).
+        var onDisk = stat()
+        var ours = stat()
+        guard stat(partial.path, &onDisk) == 0, fstat(descriptor, &ours) == 0, onDisk.st_ino == ours.st_ino, onDisk.st_dev == ours.st_dev else {
+            throw StorageError.localFile("“\(partial.lastPathComponent)” was replaced while downloading; the download was not saved.")
+        }
         guard rename(partial.path, destination.path) == 0 else {
             throw StorageError.localFile("Could not move the download into place: \(String(cString: strerror(errno))).")
         }
         await writer.finish()
-        try? FileManager.default.removeItem(at: sidecar)
+        unlink(sidecar.path)
         return metadata
     }
 }

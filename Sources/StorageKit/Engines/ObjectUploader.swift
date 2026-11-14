@@ -30,14 +30,25 @@ public struct UploadCheckpoint: Codable, Sendable, Hashable {
 /// Pause = cancel the calling task and keep the last checkpoint. Resume = call `upload` again with it
 /// (completed parts are re-validated with ListParts and skipped). Cancel = `abort(checkpoint)`.
 public struct ObjectUploader: Sendable {
+    /// Parts are held in memory while they are sent; larger parts would not fit comfortably (S3 objects are at
+    /// most 5 TiB, which needs parts of about 525 MiB).
+    public static let maximumInMemoryPartSize: Int64 = 1 << 30
+
     public let storage: any ObjectStorage
     public let limiter: AsyncLimiter
     public let partConcurrency: Int
+    /// Bytes of part data per limiter unit.
+    public let unitBytes: Int64
 
-    public init(storage: any ObjectStorage, limiter: AsyncLimiter, partConcurrency: Int = 4) {
+    public init(storage: any ObjectStorage, limiter: AsyncLimiter, partConcurrency: Int = 4, unitBytes: Int64 = 8 << 20) {
         self.storage = storage
         self.limiter = limiter
         self.partConcurrency = max(1, partConcurrency)
+        self.unitBytes = max(1, unitBytes)
+    }
+
+    func units(for length: Int64) -> Int {
+        Int(min(Int64(limiter.limit), max(1, (length + unitBytes - 1) / unitBytes)))
     }
 
     public func upload(file: URL, bucket: String, key: String, options: ObjectWriteOptions, partSize: Int64,
@@ -45,11 +56,18 @@ public struct ObjectUploader: Sendable {
                        onCheckpoint: @escaping @Sendable (UploadCheckpoint) -> Void) async throws -> PutResult {
         let reader = try LocalFileReader(url: file)
         let plan = PartPlan(totalSize: reader.size, preferredPartSize: partSize)
-        guard !plan.exceedsLimits else { throw StorageError.invalidRequest("“\(file.lastPathComponent)” is too large for object storage (over 48.8 TiB).") }
+        guard !plan.exceedsLimits, plan.partSize <= Self.maximumInMemoryPartSize else {
+            throw StorageError.invalidRequest("“\(file.lastPathComponent)” is too large to upload (more than 10 TiB).")
+        }
 
         guard plan.usesMultipart else {
-            let body = try await limiter.withSlot { try reader.read(offset: 0, length: reader.size) }
-            return try await storage.putObject(bucket: bucket, key: key, body: body, options: options, progress: progress)
+            let storage = storage
+            let size = reader.size
+            // The body stays in memory until the PUT finishes, so it holds its limiter units that long.
+            return try await limiter.withSlots(units(for: size)) {
+                let body = try reader.read(offset: 0, length: size)
+                return try await storage.putObject(bucket: bucket, key: key, body: body, options: options, progress: progress)
+            }
         }
 
         var state: UploadCheckpoint
@@ -57,8 +75,15 @@ public struct ObjectUploader: Sendable {
            checkpoint.partSize == plan.partSize, Self.sameDate(checkpoint.fileModification, reader.modificationDate) {
             state = checkpoint
             // The server is the source of truth: keep only parts it has, with the planned size.
-            let listed = try await storage.listParts(bucket: bucket, key: key, uploadID: checkpoint.uploadID)
-            state.parts = listed.filter { part in plan.range(ofPart: part.partNumber).map { $0.length == part.size } ?? false }
+            do {
+                let listed = try await storage.listParts(bucket: bucket, key: key, uploadID: checkpoint.uploadID)
+                state.parts = listed.filter { part in plan.range(ofPart: part.partNumber).map { $0.length == part.size } ?? false }
+            } catch let error as StorageError where error.isNotFound {
+                // The upload was aborted meanwhile (by a lifecycle rule or the user): start a new one.
+                let uploadID = try await storage.createMultipartUpload(bucket: bucket, key: key, options: options)
+                state = UploadCheckpoint(bucket: bucket, key: key, uploadID: uploadID, partSize: plan.partSize, fileSize: reader.size,
+                                         fileModification: reader.modificationDate, parts: [])
+            }
         } else {
             if let checkpoint, checkpoint.bucket == bucket, checkpoint.key == key {
                 // The file changed since the pause: the old parts are useless.
@@ -80,8 +105,9 @@ public struct ObjectUploader: Sendable {
             var iterator = pending.makeIterator()
             func addNext() -> Bool {
                 guard let number = iterator.next(), let range = plan.range(ofPart: number) else { return false }
+                let units = units(for: range.length)
                 group.addTask {
-                    try await limiter.withSlot {
+                    try await limiter.withSlots(units) {
                         try Task.checkCancellation()
                         let body = try reader.read(offset: range.offset, length: range.length)
                         return try await storage.uploadPart(bucket: bucket, key: key, uploadID: uploadID, partNumber: number,
@@ -106,7 +132,16 @@ public struct ObjectUploader: Sendable {
             throw StorageError.invalidResponse("Only \(parts.count) of \(plan.partCount) parts were uploaded.")
         }
         try Task.checkCancellation()
-        return try await storage.completeMultipartUpload(bucket: bucket, key: key, uploadID: uploadID, parts: parts)
+        do {
+            return try await storage.completeMultipartUpload(bucket: bucket, key: key, uploadID: uploadID, parts: parts)
+        } catch let error as StorageError where error.code == "NoSuchUpload" {
+            // A retried Complete whose first attempt succeeded: the object exists with the expected size and part count.
+            if let existing = try? await storage.headObject(bucket: bucket, key: key, versionID: nil), existing.size == reader.size,
+               existing.eTag?.hasSuffix("-\(parts.count)\"") ?? false {
+                return PutResult(eTag: existing.eTag, versionID: existing.versionID)
+            }
+            throw error
+        }
     }
 
     /// Releases the parts of an unfinished upload.

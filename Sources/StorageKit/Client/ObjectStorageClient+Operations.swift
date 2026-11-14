@@ -175,7 +175,7 @@ extension ObjectStorageClient {
         }
         if let range, response.statusCode == 206 {
             guard let bounds = response.header("content-range").flatMap(ResponseDecoders.contentRangeBounds),
-                  bounds.first == range.first, bounds.last <= range.last,
+                  bounds.first == range.first, bounds.last == range.last,
                   response.bytesWritten == bounds.last - bounds.first + 1 else {
                 throw StorageError.invalidResponse("The server returned a different byte range than requested.")
             }

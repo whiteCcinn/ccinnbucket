@@ -78,7 +78,8 @@ public final class ObjectStorageClient: ObjectStorage {
 
     func execute(_ operation: Operation) async throws -> HTTPResponse {
         let payloadHash = operation.body.map { PayloadHash.sha256Hex($0) } ?? PayloadHash.empty
-        var headers = operation.headers
+        // HTTP strips surrounding whitespace from field values, so sign exactly what the server will see.
+        var headers = operation.headers.map { HTTPHeader($0.name, $0.value.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))) }
         if let body = operation.body, !body.isEmpty, operation.contentMD5 || dialect.sendsContentMD5ForBodies,
            !headers.contains(where: { $0.name.lowercased() == "content-md5" }) {
             headers.append(HTTPHeader("Content-MD5", Hashing.md5Base64(body)))
@@ -136,6 +137,7 @@ public final class ObjectStorageClient: ObjectStorage {
         }
         let signingRequest = SigningRequest(method: operation.method, host: target.hostHeader, path: target.path,
                                             query: operation.query, headers: headers, bucket: operation.bucket, key: operation.key)
+        let offsetUsed = clock.currentOffset
         let authorization = dialect.sign(signingRequest, payloadHash: payloadHash, region: target.signingRegion,
                                          date: clock.now(), credentials: credentials)
         guard let url = target.url(encodedQuery: PercentEncoding.queryString(operation.query)) else {
@@ -189,6 +191,8 @@ public final class ObjectStorageClient: ObjectStorage {
             let serverTime = error.details["ServerTime"].flatMap(StorageDate.parseISO8601)
                 ?? response.header("date").flatMap(SigningTime.parseHTTPDate)
             if let serverTime, clock.adjust(serverTime: serverTime) { return .correctedClock(error) }
+            // A parallel request may already have corrected the clock since this one was signed.
+            if abs(clock.currentOffset - offsetUsed) > 1 { return .correctedClock(error) }
         }
         return .failure(error)
     }

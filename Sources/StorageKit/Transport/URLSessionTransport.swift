@@ -96,6 +96,9 @@ final class TaskRouter: NSObject, URLSessionDataDelegate, Sendable {
         var written: Int64 = 0
         var writingToFile = false
         var failure: StorageError?
+        /// Set when an unaccepted (error) response body exceeded the capture limit and the task was stopped early;
+        /// the response is still delivered, with the body captured so far.
+        var stoppedEarly = false
 
         init(continuation: CheckedContinuation<HTTPResponse, any Error>, sink: ResponseSink, progress: TransferProgressHandler?) {
             self.continuation = continuation
@@ -162,7 +165,12 @@ final class TaskRouter: NSObject, URLSessionDataDelegate, Sendable {
                 return .none
             case let .file(descriptor, offset, maxBytes, _):
                 guard state.writingToFile else {
-                    if state.body.count + data.count <= Self.errorBodyLimit { state.body.append(data) }
+                    guard state.body.count + data.count <= Self.errorBodyLimit else {
+                        // Never stream a large unexpected body (e.g. a whole object instead of a range) to the end.
+                        state.stoppedEarly = true
+                        return .cancel
+                    }
+                    state.body.append(data)
                     return .none
                 }
                 guard state.written + Int64(data.count) <= maxBytes else {
@@ -204,6 +212,9 @@ final class TaskRouter: NSObject, URLSessionDataDelegate, Sendable {
         guard let state = states.withLock({ $0.removeValue(forKey: task.taskIdentifier) }) else { return }
         if let failure = state.failure {
             state.continuation.resume(throwing: failure)
+        } else if state.stoppedEarly {
+            state.continuation.resume(returning: HTTPResponse(statusCode: state.statusCode, headers: state.headers, body: state.body,
+                                                              bytesWritten: state.written))
         } else if let error {
             state.continuation.resume(throwing: StorageError.wrap(error))
         } else if state.statusCode == 0 {

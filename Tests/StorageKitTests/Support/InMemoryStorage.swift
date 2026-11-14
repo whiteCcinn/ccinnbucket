@@ -26,6 +26,11 @@ final class InMemoryStorage: ObjectStorage {
         var uploadedPartNumbers: [Int] = []
         var downloadedRanges: [ByteRange] = []
         var nextUploadID = 1
+        var tags: [String: [ObjectTag]] = [:]
+        /// Reported object size override (for implausible-size tests).
+        var sizeOverride: Int64?
+        /// When set, CompleteMultipartUpload stores the object and then reports NoSuchUpload (lost response + retry).
+        var completeLosesResponse = false
     }
 
     let state = OSAllocatedUnfairLock(initialState: State())
@@ -92,8 +97,8 @@ final class InMemoryStorage: ObjectStorage {
     func headObject(bucket: String, key: String, versionID: String?) async throws -> ObjectMetadata {
         record("headObject")
         guard let stored = object(bucket, key) else { throw StorageError(kind: .service, code: "NoSuchKey", message: "missing", statusCode: 404) }
-        var metadata = ObjectMetadata(key: key, size: Int64(stored.data.count), eTag: stored.eTag, contentType: stored.options.contentType,
-                                      userMetadata: stored.options.userMetadata)
+        var metadata = ObjectMetadata(key: key, size: state.withLock { $0.sizeOverride } ?? Int64(stored.data.count), eTag: stored.eTag,
+                                      contentType: stored.options.contentType, userMetadata: stored.options.userMetadata)
         metadata.storageClass = stored.options.storageClass
         return metadata
     }
@@ -156,8 +161,13 @@ final class InMemoryStorage: ObjectStorage {
         return PutResult(eTag: object(request.destinationBucket, request.destinationKey)?.eTag)
     }
 
-    func getObjectTags(bucket: String, key: String, versionID: String?) async throws -> [ObjectTag] { [] }
-    func putObjectTags(bucket: String, key: String, versionID: String?, tags: [ObjectTag]) async throws {}
+    func getObjectTags(bucket: String, key: String, versionID: String?) async throws -> [ObjectTag] {
+        state.withLock { $0.tags[Self.id(bucket, key)] ?? [] }
+    }
+
+    func putObjectTags(bucket: String, key: String, versionID: String?, tags: [ObjectTag]) async throws {
+        state.withLock { $0.tags[Self.id(bucket, key)] = tags }
+    }
 
     func createMultipartUpload(bucket: String, key: String, options: ObjectWriteOptions) async throws -> String {
         record("createMultipartUpload")
@@ -215,6 +225,14 @@ final class InMemoryStorage: ObjectStorage {
             data.append(stored.data)
         }
         store(bucket, key, data, options: upload.options)
+        state.withLock { state in
+            state.tags[Self.id(bucket, key)] = upload.options.tags
+            let stored = state.objects[Self.id(bucket, key)]
+            state.objects[Self.id(bucket, key)]?.eTag = "\"\(stored?.data.hashValue ?? 0)-\(parts.count)\""
+        }
+        if state.withLock({ $0.completeLosesResponse }) {
+            throw StorageError(kind: .service, code: "NoSuchUpload", message: "gone", statusCode: 404)
+        }
         return PutResult(eTag: "\"multipart-\(parts.count)\"")
     }
 
@@ -225,8 +243,9 @@ final class InMemoryStorage: ObjectStorage {
 
     func listParts(bucket: String, key: String, uploadID: String) async throws -> [UploadedPart] {
         record("listParts")
-        return state.withLock { state in
-            (state.uploads[uploadID]?.parts ?? [:]).map { UploadedPart(partNumber: $0.key, eTag: $0.value.eTag, size: Int64($0.value.data.count)) }
+        return try state.withLock { state in
+            guard let upload = state.uploads[uploadID] else { throw StorageError(kind: .service, code: "NoSuchUpload", message: "gone", statusCode: 404) }
+            return upload.parts.map { UploadedPart(partNumber: $0.key, eTag: $0.value.eTag, size: Int64($0.value.data.count)) }
         }
     }
 

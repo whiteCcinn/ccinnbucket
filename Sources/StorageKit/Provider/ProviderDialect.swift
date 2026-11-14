@@ -62,10 +62,28 @@ struct S3Dialect: ProviderDialect {
     var defaultStorageClass: String { "STANDARD" }
     var sendsContentMD5ForBodies: Bool { false }
 
-    /// AWS-managed endpoints are routed per bucket region; anything else is a fixed custom endpoint.
+    /// Only plain regional AWS endpoints are routed per bucket region. Any other host — custom services and
+    /// special AWS endpoints (FIPS, dual-stack, accelerate, PrivateLink) — is used exactly as configured.
     var isAWSManaged: Bool {
         guard let endpoint = configuration.endpoint else { return true }
-        return endpoint.host.hasSuffix(".amazonaws.com") || endpoint.host.hasSuffix(".amazonaws.com.cn")
+        return Self.isPlainRegionalAWSHost(endpoint.host)
+    }
+
+    /// `s3.amazonaws.com`, `s3.<region>.amazonaws.com(.cn)` or the legacy `s3-<region>.amazonaws.com`.
+    static func isPlainRegionalAWSHost(_ host: String) -> Bool {
+        let labels = host.lowercased().split(separator: ".").map(String.init)
+        if labels == ["s3", "amazonaws", "com"] { return true }
+        let suffixCount = labels.suffix(3) == ["amazonaws", "com", "cn"] ? 3 : (labels.suffix(2) == ["amazonaws", "com"] ? 2 : 0)
+        guard suffixCount > 0 else { return false }
+        let head = Array(labels.dropLast(suffixCount))
+        func isRegion(_ text: String) -> Bool {
+            let parts = text.split(separator: "-")
+            return parts.count >= 3 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber } }
+                && !["fips", "dualstack", "accelerate", "external"].contains(where: text.contains)
+        }
+        if head.count == 2, head[0] == "s3" { return isRegion(head[1]) }
+        if head.count == 1, head[0].hasPrefix("s3-") { return isRegion(String(head[0].dropFirst(3))) }
+        return false
     }
 
     var defaultLocation: BucketLocation {

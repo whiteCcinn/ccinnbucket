@@ -66,11 +66,12 @@ public final class SigningClock: Sendable {
     }
 }
 
-/// A counting semaphore for async code with FIFO fairness and cancellation-aware waiting.
-/// Bounds concurrent parts/chunks across all transfers (and therefore their memory).
+/// A weighted counting semaphore for async code with FIFO fairness and cancellation-aware waiting.
+/// Bounds concurrent parts/chunks across all transfers; uploads acquire one unit per `unitBytes` of part
+/// data, so memory stays within `limit × unitBytes` whatever the part size.
 public actor AsyncLimiter {
     private var available: Int
-    private var waiters: [(id: UInt64, continuation: CheckedContinuation<Void, any Error>)] = []
+    private var waiters: [(id: UInt64, units: Int, continuation: CheckedContinuation<Void, any Error>)] = []
     private var nextID: UInt64 = 0
     public let limit: Int
 
@@ -79,27 +80,29 @@ public actor AsyncLimiter {
         self.available = max(1, limit)
     }
 
-    public func acquire() async throws {
+    /// Acquires `units` (clamped to 1…limit) in FIFO order.
+    public func acquire(units requested: Int = 1) async throws {
         try Task.checkCancellation()
-        if available > 0, waiters.isEmpty {
-            available -= 1
+        let units = min(max(1, requested), limit)
+        if waiters.isEmpty, available >= units {
+            available -= units
             return
         }
         let id = nextID
         nextID &+= 1
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                waiters.append((id, continuation))
+                waiters.append((id, units, continuation))
             }
         } onCancel: {
             Task { await self.cancelWaiter(id) }
         }
     }
 
-    public func release() {
-        if waiters.isEmpty {
-            available = min(limit, available + 1)
-        } else {
+    public func release(units requested: Int = 1) {
+        available = min(limit, available + min(max(1, requested), limit))
+        while let first = waiters.first, first.units <= available {
+            available -= first.units
             waiters.removeFirst().continuation.resume()
         }
     }
@@ -107,19 +110,29 @@ public actor AsyncLimiter {
     private func cancelWaiter(_ id: UInt64) {
         guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
         waiters.remove(at: index).continuation.resume(throwing: CancellationError())
+        // A large waiter leaving the head may unblock smaller ones behind it.
+        while let first = waiters.first, first.units <= available {
+            available -= first.units
+            waiters.removeFirst().continuation.resume()
+        }
     }
 
-    /// Runs `body` while holding one slot.
-    public func withSlot<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T {
-        try await acquire()
+    /// Runs `body` while holding `units`.
+    public func withSlots<T: Sendable>(_ units: Int, _ body: @Sendable () async throws -> T) async throws -> T {
+        try await acquire(units: units)
         do {
             let value = try await body()
-            release()
+            release(units: units)
             return value
         } catch {
-            release()
+            release(units: units)
             throw error
         }
+    }
+
+    /// Runs `body` while holding one unit.
+    public func withSlot<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T {
+        try await withSlots(1, body)
     }
 
     public var inUse: Int { limit - available }

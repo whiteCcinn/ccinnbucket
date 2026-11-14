@@ -46,6 +46,11 @@ public struct ServerSideCopier: Sendable {
             options = metadata.writeOptions
             if let storageClass = request.options.storageClass { options.storageClass = storageClass }
         }
+        // Multipart copies do not carry tags either: re-apply the source tags unless new ones were given.
+        if options.tags.isEmpty, let tags = try? await storage.getObjectTags(bucket: request.sourceBucket, key: request.sourceKey,
+                                                                              versionID: request.sourceVersionID) {
+            options.tags = tags
+        }
         let plan = PartPlan(totalSize: size, preferredPartSize: partSize)
         guard !plan.exceedsLimits else { throw StorageError.invalidRequest("The object is too large to copy.") }
         let uploadID = try await storage.createMultipartUpload(bucket: request.destinationBucket, key: request.destinationKey, options: options)
@@ -101,7 +106,9 @@ public struct ObjectEnumerator: Sendable {
             try Task.checkCancellation()
             let page = try await storage.listObjects(ListObjectsRequest(bucket: bucket, prefix: prefix, delimiter: nil, token: token))
             if !page.objects.isEmpty, try await !body(page.objects) { return }
-            token = page.isTruncated ? page.nextToken : nil
+            let next = page.isTruncated ? page.nextToken : nil
+            guard next != token else { throw StorageError.invalidResponse("The server returned the same listing page twice.") }
+            token = next
         } while token != nil
     }
 
