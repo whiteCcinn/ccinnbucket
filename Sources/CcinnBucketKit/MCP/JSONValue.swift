@@ -206,8 +206,8 @@ public enum MCPLimits {
     public static func fit(_ object: [String: JSONValue], limit: Int = maximumResultBytes) -> JSONValue {
         var current = object
         guard JSONValue.object(current).encoded().count > limit else { return .object(current) }
-        current["truncated"] = .bool(true)
-        current["truncationNote"] = .string("The result was shortened to fit \(limit / 1024) KB; narrow the request (prefix, max_keys, max_bytes).")
+        current["resultShortened"] = .bool(true)
+        current["note"] = .string("The result was shortened to fit \(limit / 1024) KB; narrow the request (prefix, max_keys, max_bytes).")
         let budget = limit - 64
         for _ in 0..<4 {
             guard JSONValue.object(current).encoded().count > budget else { break }

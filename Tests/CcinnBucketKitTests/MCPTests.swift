@@ -254,20 +254,95 @@ struct MCPServerTests {
         #expect(Self.isError(await writable.call(7, "put_text_object", #"{"bucket":"b","key":"big.txt","text":"\#(big)"}"#)))
     }
 
-    @Test("results larger than the cap are shortened and flagged")
-    func truncation() async throws {
+    @Test("listings that would exceed the result cap ask the server for smaller pages; paging stays gap-free")
+    func adaptivePages() async throws {
         let storage = FakeStorage()
         let longName = String(repeating: "k", count: 900)
-        for index in 0..<1_000 { storage.put("b", "\(longName)\(index)", "x") }
+        let keys = (0..<1_000).map { String(format: "\(longName)%04d", $0) }
+        for key in keys { storage.put("b", key, "x") }
         let harness = await Self.harness(accounts: [Self.account("a", access: .readOnly)], storage: storage)
-        let response = await harness.call(1, "list_objects", #"{"bucket":"b","max_keys":1000}"#)
-        let text = Self.errorText(response)
-        #expect(text.utf8.count <= MCPLimits.maximumResultBytes)
-        #expect(Self.payload(response)?["truncated"] == .bool(true))
-        #expect((Self.payload(response)?["objects"]?.arrayValue?.count ?? 0) > 0)
-        #expect(response?["result"]?["structuredContent"] != nil)
+        var seen: [String] = []
+        var token: String?
+        var id = 1
+        repeat {
+            let arguments = token.map { #"{"bucket":"b","max_keys":1000,"continuation_token":"\#($0)"}"# } ?? #"{"bucket":"b","max_keys":1000}"#
+            let response = await harness.call(id, "list_objects", arguments)
+            #expect(Self.errorText(response).utf8.count <= MCPLimits.maximumResultBytes)
+            let payload = try #require(Self.payload(response))
+            if id == 1 { #expect(payload["pageSizeReduced"] == .bool(true)) }
+            seen += payload["objects"]?.arrayValue?.compactMap { $0["key"]?.stringValue } ?? []
+            token = payload["nextContinuationToken"]?.stringValue
+            id += 1
+        } while token != nil && id < 50
+        #expect(seen == keys, "every key exactly once, in order")
+        #expect(await harness.call(99, "list_buckets")?["result"]?["structuredContent"] != nil)
         let old = await Self.harness(accounts: [Self.account("a", access: .readOnly)], storage: storage, version: "2024-11-05")
         #expect(await old.call(1, "list_buckets")?["result"]?["structuredContent"] == nil)
+    }
+
+    @Test("reading JSON-heavy text in maximum-size pages reconstructs the object exactly")
+    func exactTextPaging() async throws {
+        let storage = FakeStorage()
+        // Quotes, backslashes and control characters double or sextuple in size when JSON-escaped.
+        let unit = "\"q\"\\\u{1}é漢\n"
+        let content = String(repeating: unit, count: 40_000)
+        storage.put("b", "big.json", content, contentType: "text/plain")
+        let harness = await Self.harness(accounts: [Self.account("a", access: .readOnly)], storage: storage)
+        var offset = 0
+        var collected = Data()
+        var id = 1
+        while offset < content.utf8.count, id < 200 {
+            let response = await harness.call(id, "read_object_text", #"{"bucket":"b","key":"big.json","offset":\#(offset),"max_bytes":262144}"#)
+            #expect(Self.errorText(response).utf8.count <= MCPLimits.maximumResultBytes)
+            let payload = try #require(Self.payload(response))
+            let text = try #require(payload["text"]?.stringValue)
+            let bytesRead = Int(try #require(payload["bytesRead"]?.intValue))
+            #expect(bytesRead == text.utf8.count, "no characters were split at page boundaries here")
+            collected.append(Data(text.utf8))
+            offset += bytesRead
+            id += 1
+        }
+        #expect(String(decoding: collected, as: UTF8.self) == content)
+    }
+
+    @Test("turning AI access off applies to a running server immediately")
+    func liveConsentChanges() async throws {
+        let current = OSAllocatedUnfairLock(initialState: [Self.account("rw", access: .readWrite)])
+        let storage = FakeStorage()
+        storage.put("b", "a.txt", "a")
+        let handler = BucketToolHandler(accountsSource: { current.withLock { $0 } },
+                                        credentials: { _ in SigningCredentials(accessKeyID: "AK", secretAccessKey: "s") },
+                                        storageFactory: { _, _ in storage })
+        let output = OutputSink()
+        let server = MCPServer(handler: handler, version: "1", output: output.write)
+        await server.receive(.message(Data(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_buckets","arguments":{}}}"#.utf8)))
+        await server.waitForIdle()
+        #expect(!Self.isError(output.response(id: 1)))
+        current.withLock { accounts in accounts[0].mcpAccess = .readOnly }
+        await server.receive(.message(Data(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"delete_objects","arguments":{"bucket":"b","keys":["a.txt"]}}}"#.utf8)))
+        current.withLock { accounts in accounts[0].mcpAccess = .disabled }
+        await server.receive(.message(Data(#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_buckets","arguments":{}}}"#.utf8)))
+        await server.waitForIdle()
+        #expect(Self.isError(output.response(id: 2)))
+        #expect(Self.isError(output.response(id: 3)))
+        #expect(!storage.calls.contains("deleteObjects"))
+    }
+
+    @Test("audit lines from concurrent writers never interleave")
+    func auditAppend() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mcp-audit-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let first = MCPAuditLog(url: url)
+        let second = MCPAuditLog(url: url)
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<200 {
+                let log = index.isMultiple(of: 2) ? first : second
+                group.addTask { await log.record(tool: "t\(index)", connection: "c", arguments: [:], duration: 0, items: 1, error: nil) }
+            }
+        }
+        let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
+        #expect(lines.count == 200)
+        #expect(lines.allSatisfy { (try? JSONValue.parse(Data($0.utf8))) != nil })
     }
 
     @Test("notifications/cancelled stops the tool call and suppresses its response")

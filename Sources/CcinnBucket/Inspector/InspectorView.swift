@@ -251,7 +251,7 @@ private struct MetadataEditor: View {
                 ForEach(binding.wrappedValue.problems, id: \.self) { problem in
                     Label(problem, systemImage: "exclamationmark.circle").font(.caption).foregroundStyle(.red)
                 }
-                Text("Header, metadata and storage-class changes rewrite the object with a server-side copy\(model.row.size > model.storage.capabilities.maxSingleCopySize ? " (multipart copy for large objects)" : ""); in versioned buckets this creates a new version.")
+                Text("Header, metadata and storage-class changes rewrite the object with a server-side copy\(model.row.size > model.storage.capabilities.maxSingleCopySize ? " (multipart copy for large objects)" : ""); in versioned buckets this creates a new version. Tags are kept; object ACLs are not copied.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

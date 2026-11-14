@@ -76,35 +76,94 @@ public enum LocalPathMapper {
         return url
     }
 
-    /// Neutralises `.`/`..`, NUL and `:` and keeps components within 255 UTF-8 bytes.
+    /// File names may have 255 bytes; downloads append ".ccinnbucket-partial.json" (25 bytes) while in flight.
+    static let maximumComponentBytes = 255 - 25
+
+    /// Neutralises `.`/`..`, NUL and `:` and keeps components short enough for the in-flight suffixes.
     static func sanitize(_ component: String) -> String {
         var name = component.replacingOccurrences(of: "\u{0}", with: "_").replacingOccurrences(of: ":", with: "_")
         if name == "." || name == ".." { name = "_" + name }
         // File systems limit names to 255 bytes; measure the decomposed form, which is the longest.
         func length(_ text: String) -> Int { text.decomposedStringWithCanonicalMapping.utf8.count }
-        guard length(name) > 255 else { return name }
+        guard length(name) > maximumComponentBytes else { return name }
         let digest = SHA256.hash(data: Data(name.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined()
         let ext = (name as NSString).pathExtension
         let suffix = "~" + digest + (ext.isEmpty || ext.utf8.count > 16 ? "" : "." + ext)
         var stem = ""
         for character in name {
-            if length(stem + String(character)) + suffix.utf8.count > 255 { break }
+            if length(stem + String(character)) + suffix.utf8.count > maximumComponentBytes { break }
             stem.append(character)
         }
         return stem + suffix
     }
 
-    /// A non-conflicting variant of `url` ("name 2.ext", "name 3.ext", …) for "keep both".
-    public static func uniqueURL(for url: URL, fileManager: FileManager = .default) -> URL {
-        guard fileManager.fileExists(atPath: url.path) else { return url }
+    /// A non-conflicting variant of `url` ("name 2.ext", …): a path is taken when the file exists, a download is
+    /// in flight for it (partial file), or it is in `reserved` (compared case- and Unicode-insensitively, like APFS).
+    public static func uniqueURL(for url: URL, reserved: Set<String> = [], fileManager: FileManager = .default) -> URL {
+        func taken(_ candidate: URL) -> Bool {
+            fileManager.fileExists(atPath: candidate.path)
+                || fileManager.fileExists(atPath: candidate.path + ".ccinnbucket-partial")
+                || reserved.contains(reservationKey(candidate))
+        }
+        guard taken(url) else { return url }
         let directory = url.deletingLastPathComponent()
         let ext = url.pathExtension
         let stem = url.deletingPathExtension().lastPathComponent
         for index in 2..<10_000 {
             let candidate = directory.appendingPathComponent(ext.isEmpty ? "\(stem) \(index)" : "\(stem) \(index).\(ext)")
-            if !fileManager.fileExists(atPath: candidate.path) { return candidate }
+            if !taken(candidate) { return candidate }
         }
         return directory.appendingPathComponent("\(stem) \(UUID().uuidString.prefix(8))" + (ext.isEmpty ? "" : ".\(ext)"))
+    }
+}
+
+/// Plans download destinations for objects (off the main actor; touches the file system only to test existence).
+public enum DownloadPlanner {
+    public struct Source: Sendable, Hashable {
+        public var key: String
+        public var size: Int64
+        public var versionID: String?
+
+        public init(key: String, size: Int64, versionID: String? = nil) {
+            self.key = key
+            self.size = size
+            self.versionID = versionID
+        }
+    }
+
+    /// One download item per object, with destinations unique even on case- and normalisation-insensitive volumes.
+    public static func plan(_ sources: [Source], bucket: String, relativeTo prefix: String, root: URL) -> [TransferItem] {
+        var reserved = Set<String>()
+        var items: [TransferItem] = []
+        items.reserveCapacity(sources.count)
+        for source in sources {
+            guard let mapped = LocalPathMapper.localURL(forKey: source.key, relativeTo: prefix, root: root) else { continue }
+            let destination = LocalPathMapper.uniqueURL(for: mapped, reserved: reserved)
+            reserved.insert(LocalPathMapper.reservationKey(destination))
+            items.append(TransferItem(kind: .download(bucket: bucket, key: source.key, versionID: source.versionID, destination: destination),
+                                      size: source.size))
+        }
+        return items
+    }
+}
+
+extension LocalPathMapper {
+    /// Key for comparing local paths the way the default (case-insensitive, normalisation-insensitive) APFS does.
+    public static func reservationKey(_ url: URL) -> String {
+        url.standardizedFileURL.path.precomposedStringWithCanonicalMapping.lowercased()
+    }
+}
+
+/// `Content-Disposition` values for "download as" links (RFC 6266 / RFC 5987).
+public enum ContentDisposition {
+    /// `attachment; filename="<ascii>"; filename*=UTF-8''<percent-encoded>`.
+    public static func attachment(filename: String) -> String {
+        let fallback = String(filename.unicodeScalars.map { scalar -> Character in
+            scalar.isASCII && scalar.value >= 0x20 && scalar != "\"" && scalar != "\\" && scalar.value != 0x7F ? Character(scalar) : "_"
+        })
+        let attrChar = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$&+-.^_`|~")
+        let encoded = filename.addingPercentEncoding(withAllowedCharacters: attrChar) ?? "download"
+        return "attachment; filename=\"\(fallback.isEmpty ? "download" : fallback)\"; filename*=UTF-8''\(encoded)"
     }
 }
 

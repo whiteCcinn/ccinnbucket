@@ -274,7 +274,7 @@ public struct StorageAccount: Codable, Identifiable, Hashable, Sendable {
             if trimmedEndpoint.isEmpty { errors.append("Enter the custom domain") }
             if customDomainBucket.trimmingCharacters(in: .whitespaces).isEmpty { errors.append("Enter the bucket bound to the custom domain") }
         }
-        if !(5...5_120).contains(partSizeMiB) { errors.append("Part size must be between 5 MiB and 5 GiB") }
+        if !(5...Self.maximumPartSizeMiB).contains(partSizeMiB) { errors.append("Part size must be between 5 and \(Self.maximumPartSizeMiB) MiB") }
         return errors
     }
 
@@ -294,7 +294,38 @@ public struct StorageAccount: Codable, Identifiable, Hashable, Sendable {
                                     ossSignatureVersion: ossSignatureVersion, listAPIVersion: listAPIVersion)
     }
 
-    public var partSizeBytes: Int64 { Int64(min(max(partSizeMiB, 5), 5_120)) << 20 }
+    public var partSizeBytes: Int64 { Int64(min(max(partSizeMiB, 5), Self.maximumPartSizeMiB)) << 20 }
+
+    /// Parts are held in memory while uploading; this keeps them comfortably bounded.
+    public static let maximumPartSizeMiB = 512
+
+    /// Three-way merge for saving an editor draft: fields the user changed (`edited` vs `base`) win; every other
+    /// field keeps its newest stored value (`latest`), so changes made elsewhere (AI access, favourites, last use)
+    /// are not reverted by a stale draft.
+    public static func merged(base: StorageAccount, edited: StorageAccount, latest: StorageAccount) -> StorageAccount {
+        var result = latest
+        func take<Value: Equatable>(_ keyPath: WritableKeyPath<StorageAccount, Value>) {
+            if edited[keyPath: keyPath] != base[keyPath: keyPath] { result[keyPath: keyPath] = edited[keyPath: keyPath] }
+        }
+        take(\.name)
+        take(\.color)
+        take(\.isFavorite)
+        take(\.kind)
+        take(\.endpoint)
+        take(\.region)
+        take(\.addressing)
+        take(\.ossEndpointKind)
+        take(\.ossSignatureVersion)
+        take(\.usesCustomDomain)
+        take(\.customDomainBucket)
+        take(\.listAPIVersion)
+        take(\.accessKeyID)
+        take(\.defaultBucket)
+        take(\.isReadOnly)
+        take(\.partSizeMiB)
+        take(\.mcpAccess)
+        return result
+    }
 
     public static func recents(_ accounts: [StorageAccount]) -> [StorageAccount] {
         accounts.filter { $0.lastConnectedAt != nil }

@@ -16,6 +16,8 @@ final class AccountDraft {
     }
 
     let accountID: UUID?
+    /// The stored account when the editor opened (for three-way merging on save).
+    let base: StorageAccount
     var account: StorageAccount
     var secretAccessKey: String
     var sessionToken: String
@@ -24,7 +26,9 @@ final class AccountDraft {
 
     init(account existing: StorageAccount?, store: AccountStore, kind: AccountKind = .amazonS3) {
         accountID = existing?.id
-        account = existing ?? StorageAccount(kind: kind)
+        let initial = existing ?? StorageAccount(kind: kind)
+        base = initial
+        account = initial
         secretAccessKey = existing.flatMap(store.secretAccessKey(for:)) ?? ""
         sessionToken = existing.flatMap(store.sessionToken(for:)) ?? ""
     }
@@ -54,6 +58,15 @@ final class AccountDraft {
         SigningCredentials(accessKeyID: account.accessKeyID.trimmingCharacters(in: .whitespaces),
                            secretAccessKey: secretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines),
                            sessionToken: sessionToken.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Whether the user changed any field since the editor opened.
+    var hasEdits: Bool { account != base }
+
+    /// The account to save: the user's edits applied on top of the newest stored version.
+    func accountToSave(latest: StorageAccount?) -> StorageAccount {
+        guard let latest else { return normalizedAccount() }
+        return StorageAccount.merged(base: base, edited: normalizedAccount(), latest: latest)
     }
 
     func normalizedAccount() -> StorageAccount {

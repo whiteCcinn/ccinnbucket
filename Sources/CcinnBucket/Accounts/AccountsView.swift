@@ -25,6 +25,12 @@ struct AccountsView: View {
         }
         .onAppear(perform: selectFirstIfNeeded)
         .onChange(of: store.accounts.count) { _, _ in selectFirstIfNeeded() }
+        .onChange(of: store.account(id: selection)) { _, latest in
+            // Changes made elsewhere (Settings → MCP, favourites) refresh an unedited editor.
+            if let latest, let current = draft, current.accountID == latest.id, !current.hasEdits, current.base != latest {
+                draft = AccountDraft(account: latest, store: store)
+            }
+        }
         .sheet(isPresented: $showingImport) {
             ImportCredentialsSheet(store: store) { imported in
                 if let first = imported.first { selection = first.id }
@@ -473,8 +479,8 @@ struct AccountEditorView: View {
 
     private func save() -> StorageAccount? {
         do {
-            let saved = try store.save(draft.normalizedAccount(), secretAccessKey: draft.credentials.secretAccessKey,
-                                       sessionToken: draft.credentials.sessionToken)
+            let saved = try store.save(draft.accountToSave(latest: store.account(id: draft.accountID)),
+                                       secretAccessKey: draft.credentials.secretAccessKey, sessionToken: draft.credentials.sessionToken)
             saveError = nil
             onSaved(saved)
             return saved

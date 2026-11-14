@@ -19,18 +19,29 @@ public actor BucketToolHandler: MCPToolHandler {
         presign_url only work for such accounts.
         """
 
-    private let accounts: [StorageAccount]
+    private let accountsSource: @Sendable () -> [StorageAccount]
     private let credentials: @Sendable (StorageAccount) -> SigningCredentials?
     private let defaultConnection: String?
     private let forceReadOnly: Bool
     private let audit: MCPAuditLog?
     private let storageFactory: StorageFactory
-    private var pool: [UUID: any ObjectStorage] = [:]
+    /// Clients per account, rebuilt whenever the account (or its effective access) changes.
+    private var pool: [UUID: (account: StorageAccount, storage: any ObjectStorage)] = [:]
 
     public init(accounts: [StorageAccount], credentials: @escaping @Sendable (StorageAccount) -> SigningCredentials?,
                 defaultConnection: String? = nil, forceReadOnly: Bool = false, audit: MCPAuditLog? = nil,
                 storageFactory: @escaping StorageFactory = BucketToolHandler.makeStorage) {
-        self.accounts = accounts
+        self.init(accountsSource: { accounts }, credentials: credentials, defaultConnection: defaultConnection, forceReadOnly: forceReadOnly,
+                  audit: audit, storageFactory: storageFactory)
+    }
+
+    /// - Parameter accountsSource: called before every request, so turning AI access off (or deleting an account)
+    ///   takes effect without restarting the server.
+    public init(accountsSource: @escaping @Sendable () -> [StorageAccount],
+                credentials: @escaping @Sendable (StorageAccount) -> SigningCredentials?,
+                defaultConnection: String? = nil, forceReadOnly: Bool = false, audit: MCPAuditLog? = nil,
+                storageFactory: @escaping StorageFactory = BucketToolHandler.makeStorage) {
+        self.accountsSource = accountsSource
         self.credentials = credentials
         self.defaultConnection = defaultConnection
         self.forceReadOnly = forceReadOnly
@@ -52,7 +63,7 @@ public actor BucketToolHandler: MCPToolHandler {
         return access
     }
 
-    private var enabledAccounts: [StorageAccount] { accounts.filter { effectiveAccess($0) != .disabled } }
+    private var enabledAccounts: [StorageAccount] { accountsSource().filter { effectiveAccess($0) != .disabled } }
 
     private func resolve(_ requested: String?) -> Result<StorageAccount, ToolError> {
         let enabled = enabledAccounts
@@ -70,14 +81,17 @@ public actor BucketToolHandler: MCPToolHandler {
     }
 
     private func storage(for account: StorageAccount) throws -> any ObjectStorage {
-        if let cached = pool[account.id] { return cached }
+        var effective = account
+        effective.mcpAccess = effectiveAccess(account)
+        effective.lastConnectedAt = nil
+        if let cached = pool[account.id], cached.account == effective { return cached.storage }
         guard let credentials = credentials(account) else {
             throw ToolError("No secret access key is stored for “\(account.displayName)”. Open CcinnBucket and save the account's secret key.")
         }
-        var effective = account
-        effective.mcpAccess = effectiveAccess(account)
         let storage = try storageFactory(effective, credentials)
-        pool[account.id] = storage
+        pool[account.id] = (effective, storage)
+        let known = Set(accountsSource().map(\.id))
+        pool = pool.filter { known.contains($0.key) }
         return storage
     }
 
@@ -228,7 +242,7 @@ public actor MCPAuditLog {
         self.url = url
     }
 
-    func record(tool: String, connection: String?, arguments: [String: JSONValue], duration: TimeInterval, items: Int?, error: String?) {
+    public func record(tool: String, connection: String?, arguments: [String: JSONValue], duration: TimeInterval, items: Int?, error: String?) {
         var summary = arguments
         if let text = summary["text"]?.stringValue { summary["text"] = .string("<\(text.utf8.count) bytes>") }
         if let keys = summary["keys"]?.arrayValue, keys.count > 20 {
@@ -255,12 +269,13 @@ public actor MCPAuditLog {
             try? manager.removeItem(at: rotated)
             try? manager.moveItem(at: url, to: rotated)
         }
-        if !manager.fileExists(atPath: url.path) {
-            manager.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        // O_APPEND + one write per line: several MCP servers (one per AI client) can share the log safely.
+        let descriptor = open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { return }
+        defer { close(descriptor) }
+        line.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            _ = write(descriptor, base, raw.count)
         }
-        guard let handle = try? FileHandle(forWritingTo: url) else { return }
-        defer { try? handle.close() }
-        _ = try? handle.seekToEnd()
-        try? handle.write(contentsOf: line)
     }
 }

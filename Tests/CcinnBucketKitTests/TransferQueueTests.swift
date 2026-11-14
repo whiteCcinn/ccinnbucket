@@ -161,3 +161,22 @@ struct TransferQueueTests {
         try await Self.waitUntil { await queue.job(id)?.status == .completed }
     }
 }
+
+@Suite("Transfer queue: cleanup")
+struct TransferQueueCleanupTests {
+    @Test("removing a failed job releases its leftovers")
+    func removeFailed() async throws {
+        let executor = FakeExecutor()
+        let queue = TransferQueue(executor: executor, maxConcurrentJobs: 1, itemConcurrency: 1)
+        let item = TransferItem(kind: .upload(file: URL(fileURLWithPath: "/tmp/fail-x"), bucket: "b", key: "fail-x", options: ObjectWriteOptions()), size: 400)
+        let id = await queue.enqueue(title: "f", direction: .upload, items: [item])
+        for _ in 0..<1_000 {
+            if case .failed = await queue.job(id)?.status { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        await queue.remove(id)
+        for _ in 0..<200 where executor.log.withLock({ $0.discarded.isEmpty }) { try await Task.sleep(nanoseconds: 5_000_000) }
+        #expect(executor.log.withLock { $0.discarded } == ["fail-x"])
+        #expect(await queue.job(id) == nil)
+    }
+}

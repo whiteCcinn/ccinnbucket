@@ -1,4 +1,5 @@
 import Foundation
+import os
 import StorageKit
 import StorageSigning
 
@@ -26,13 +27,8 @@ public enum MCPLauncher {
         let directory = environment[accountsDirectoryVariable].map { URL(fileURLWithPath: $0, isDirectory: true) } ?? AccountRepository.defaultDirectory
         let testSecrets = environment[insecureTestSecretsVariable].flatMap { try? JSONValue.parse(Data($0.utf8)) }
         let repository = AccountRepository(directory: directory, secrets: testSecrets == nil ? KeychainSecretStore() : InMemorySecretStore())
-        let accounts: [StorageAccount]
-        do {
-            accounts = try repository.load()
-        } catch {
-            log("ccinnbucket mcp: could not read accounts: \(error.localizedDescription)")
-            accounts = []
-        }
+        let source = AccountsFileSource(repository: repository)
+        let accounts = source.current()
         let credentials: @Sendable (StorageAccount) -> SigningCredentials? = { account in
             if let testSecrets {
                 guard let entry = testSecrets[account.displayName] ?? testSecrets[account.id.uuidString],
@@ -41,7 +37,7 @@ public enum MCPLauncher {
             }
             return repository.credentials(for: account)
         }
-        let handler = BucketToolHandler(accounts: accounts, credentials: credentials, defaultConnection: value("--profile"),
+        let handler = BucketToolHandler(accountsSource: { source.current() }, credentials: credentials, defaultConnection: value("--profile"),
                                         forceReadOnly: arguments.contains("--read-only"),
                                         audit: MCPAuditLog(url: directory.appendingPathComponent("mcp-audit.jsonl")))
         let server = MCPServer(handler: handler, version: version, output: writeLine)
@@ -96,3 +92,37 @@ public enum MCPLauncher {
     }
 }
 
+
+/// The saved accounts, re-read whenever `accounts.json` changes (so consent changes apply immediately).
+final class AccountsFileSource: Sendable {
+    private struct Cache: Sendable {
+        var stamp: String?
+        var accounts: [StorageAccount] = []
+    }
+
+    private let repository: AccountRepository
+    private let cache = OSAllocatedUnfairLock(initialState: Cache())
+
+    init(repository: AccountRepository) {
+        self.repository = repository
+    }
+
+    func current() -> [StorageAccount] {
+        let path = repository.directory.appendingPathComponent("accounts.json").path
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        let stamp = attributes.map { "\(($0[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)-\(($0[.size] as? NSNumber)?.int64Value ?? 0)" }
+        return cache.withLock { cache in
+            guard cache.stamp != stamp || stamp == nil else { return cache.accounts }
+            if stamp == nil {
+                cache.accounts = []
+            } else if let loaded = try? repository.load() {
+                cache.accounts = loaded
+            } else {
+                MCPLauncher.log("ccinnbucket mcp: could not read accounts; AI access is disabled until the file is valid again")
+                cache.accounts = []
+            }
+            cache.stamp = stamp
+            return cache.accounts
+        }
+    }
+}

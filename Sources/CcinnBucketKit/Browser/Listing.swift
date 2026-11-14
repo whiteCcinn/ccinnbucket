@@ -113,9 +113,14 @@ public enum ListingSortColumn: String, CaseIterable, Sendable {
 }
 
 public enum ListingSorter {
-    /// Folders always first; ties keep a stable order by name then key.
-    public static func sorted(_ rows: [ListingRow], by column: ListingSortColumn, ascending: Bool) -> [ListingRow] {
-        func compare(_ lhs: ListingRow, _ rhs: ListingRow) -> ComparisonResult {
+    /// The ordering used by the object table: folders first; ties broken by name, key, then newest version.
+    public static func ordering(by column: ListingSortColumn, ascending: Bool) -> @Sendable (ListingRow, ListingRow) -> Bool {
+        @Sendable func compareNames(_ lhs: ListingRow, _ rhs: ListingRow) -> ComparisonResult {
+            if lhs.sortName != rhs.sortName { return lhs.sortName < rhs.sortName ? .orderedAscending : .orderedDescending }
+            if lhs.key != rhs.key { return lhs.key < rhs.key ? .orderedAscending : .orderedDescending }
+            return .orderedSame
+        }
+        @Sendable func compare(_ lhs: ListingRow, _ rhs: ListingRow) -> ComparisonResult {
             switch column {
             case .name:
                 return compareNames(lhs, rhs)
@@ -131,12 +136,7 @@ public enum ListingSorter {
                 return lhs.typeLabel.compare(rhs.typeLabel)
             }
         }
-        func compareNames(_ lhs: ListingRow, _ rhs: ListingRow) -> ComparisonResult {
-            if lhs.sortName != rhs.sortName { return lhs.sortName < rhs.sortName ? .orderedAscending : .orderedDescending }
-            if lhs.key != rhs.key { return lhs.key < rhs.key ? .orderedAscending : .orderedDescending }
-            return .orderedSame
-        }
-        return rows.sorted { lhs, rhs in
+        return { lhs, rhs in
             if lhs.isFolder != rhs.isFolder { return lhs.isFolder }
             var result = compare(lhs, rhs)
             if result == .orderedSame {
@@ -148,5 +148,34 @@ public enum ListingSorter {
             }
             return ascending ? result == .orderedAscending : result == .orderedDescending
         }
+    }
+
+    /// Folders always first; ties keep a stable order by name then key.
+    public static func sorted(_ rows: [ListingRow], by column: ListingSortColumn, ascending: Bool) -> [ListingRow] {
+        rows.sorted(by: ordering(by: column, ascending: ascending))
+    }
+
+    /// Merges `newRows` into already sorted `sortedRows` in O(n + m log m) instead of re-sorting everything.
+    public static func merging(_ sortedRows: [ListingRow], with newRows: [ListingRow], by column: ListingSortColumn, ascending: Bool) -> [ListingRow] {
+        guard !newRows.isEmpty else { return sortedRows }
+        let inOrder = ordering(by: column, ascending: ascending)
+        let incoming = newRows.sorted(by: inOrder)
+        guard !sortedRows.isEmpty else { return incoming }
+        var result: [ListingRow] = []
+        result.reserveCapacity(sortedRows.count + incoming.count)
+        var left = 0
+        var right = 0
+        while left < sortedRows.count, right < incoming.count {
+            if inOrder(incoming[right], sortedRows[left]) {
+                result.append(incoming[right])
+                right += 1
+            } else {
+                result.append(sortedRows[left])
+                left += 1
+            }
+        }
+        result.append(contentsOf: sortedRows[left...])
+        result.append(contentsOf: incoming[right...])
+        return result
     }
 }

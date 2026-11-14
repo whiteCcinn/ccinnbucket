@@ -409,7 +409,7 @@ struct MCPSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Text("CcinnBucket includes a Model Context Protocol server, so AI tools such as Claude Code, Codex and Claude Desktop can list buckets and read objects through your saved accounts. Accounts are off until you enable them below; read-only is the safe default. Every call is logged to mcp-audit.jsonl in the accounts folder.")
+                Text("CcinnBucket includes a Model Context Protocol server, so AI tools such as Claude Code, Codex and Claude Desktop can list buckets and read objects through your saved accounts. Accounts are off until you enable them below; read-only is the safe default. Every call is logged to mcp-audit.jsonl in the accounts folder. Changes apply to running AI clients immediately.")
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -421,7 +421,7 @@ struct MCPSettingsView: View {
                     Picker(selection: Binding(get: { account.mcpAccess }, set: { access in
                         var updated = account
                         updated.mcpAccess = access
-                        _ = try? store.save(updated, secretAccessKey: store.secretAccessKey(for: account), sessionToken: store.sessionToken(for: account))
+                        store.update(updated)
                     })) {
                         ForEach(MCPAccess.allCases) { Text($0.title).tag($0) }
                     } label: {

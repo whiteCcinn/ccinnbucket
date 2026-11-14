@@ -266,6 +266,7 @@ struct ObjectMenuBuilder {
         }
         let single = rows.count == 1 ? rows[0] : nil
         let isVersion = rows.allSatisfy { $0.kind == .version }
+        let anyVersion = rows.contains { $0.kind == .version }
         if let single, single.isFolder {
             menu.addItem(item("Open", "folder") { model.open(single) })
         } else if let single, !(single.version?.isDeleteMarker ?? false) {
@@ -280,7 +281,7 @@ struct ObjectMenuBuilder {
         menu.addItem(.separator())
         if isVersion, let single, let version = single.version {
             menu.addItem(item("Restore This Version", "clock.arrow.circlepath", enabled: writable && !version.isDeleteMarker) { model.restore(single) })
-        } else {
+        } else if !anyVersion {
             if let single {
                 menu.addItem(item("Rename…", "pencil", enabled: writable) { model.sheet = .rename(single) })
             }
@@ -291,7 +292,7 @@ struct ObjectMenuBuilder {
         menu.addItem(item(rows.count == 1 ? "Copy Key" : "Copy Keys", "key") { model.copyKey(rows) })
         menu.addItem(item(workspace.capabilities.provider == .oss ? "Copy oss:// URI" : "Copy s3:// URI", "link.badge.plus") { model.copyURI(rows) })
         menu.addItem(.separator())
-        menu.addItem(item(isVersion ? "Delete Permanently…" : "Delete…", "trash", enabled: writable) { model.requestDelete(rows) })
+        menu.addItem(item(isVersion ? "Delete Permanently…" : "Delete…", "trash", enabled: writable && (isVersion || !anyVersion)) { model.requestDelete(rows) })
         return menu
     }
 }

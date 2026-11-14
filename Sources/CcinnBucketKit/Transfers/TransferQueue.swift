@@ -121,14 +121,26 @@ public actor TransferQueue {
     /// Thread-safe progress and checkpoint storage written by executor callbacks.
     final class Box: Sendable {
         struct State: Sendable {
-            var itemBytes: [UUID: Int64] = [:]
+            private(set) var itemBytes: [UUID: Int64] = [:]
+            /// Running sum of `itemBytes` (O(1) to read; updated with every delta).
+            private(set) var total: Int64 = 0
             var checkpoints: [UUID: UploadCheckpoint] = [:]
             var current: String?
+
+            mutating func set(_ id: UUID, _ bytes: Int64) {
+                total &+= bytes &- (itemBytes[id] ?? 0)
+                itemBytes[id] = bytes
+            }
+
+            mutating func add(_ id: UUID, _ delta: Int64) {
+                itemBytes[id, default: 0] &+= delta
+                total &+= delta
+            }
         }
 
         let state = OSAllocatedUnfairLock(initialState: State())
 
-        var total: Int64 { state.withLock { $0.itemBytes.values.reduce(0, &+) } }
+        var total: Int64 { state.withLock { $0.total } }
     }
 
     private struct JobState {
@@ -220,10 +232,10 @@ public actor TransferQueue {
         schedule()
     }
 
-    /// Removes a job that is not running.
+    /// Removes a job that is not running (unfinished or failed items release their leftovers).
     public func remove(_ id: UUID) {
         guard let state = jobs[id], state.job.status != .running else { return }
-        if !state.job.status.isFinished { discardUnfinished(of: state) }
+        if state.job.status != .completed, state.job.status != .cancelled { discardUnfinished(of: state) }
         jobs[id] = nil
         order.removeAll { $0 == id }
     }
@@ -287,7 +299,7 @@ public actor TransferQueue {
             state.stopReason = nil
             let pending = state.items.filter { !state.done.contains($0.id) }
             let box = state.box
-            box.state.withLock { shared in for item in pending { shared.itemBytes[item.id] = 0 } }
+            box.state.withLock { shared in for item in pending { shared.set(item.id, 0) } }
             let executor = executor
             let concurrency = itemConcurrency
             state.task = Task { [weak self] in
@@ -312,19 +324,19 @@ public actor TransferQueue {
                 guard let item = iterator.next() else { return false }
                 group.addTask {
                     let checkpoint = box.state.withLock { shared -> UploadCheckpoint? in
-                        shared.itemBytes[item.id] = 0
+                        shared.set(item.id, 0)
                         shared.current = item.displayName
                         return shared.checkpoints[item.id]
                     }
                     do {
                         try Task.checkCancellation()
                         try await executor.execute(item, checkpoint: checkpoint, progress: { delta in
-                            box.state.withLock { $0.itemBytes[item.id, default: 0] &+= delta }
+                            box.state.withLock { $0.add(item.id, delta) }
                         }, onCheckpoint: { checkpoint in
                             box.state.withLock { $0.checkpoints[item.id] = checkpoint }
                         })
                         box.state.withLock { shared in
-                            shared.itemBytes[item.id] = item.size
+                            shared.set(item.id, item.size)
                             shared.checkpoints[item.id] = nil
                         }
                         return (item.id, .done)

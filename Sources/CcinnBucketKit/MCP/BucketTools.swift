@@ -148,24 +148,37 @@ enum BucketTools {
         throw ToolError("Invalid continuation_token; pass the nextContinuationToken value from the previous result unchanged.")
     }
 
+    /// Whether a payload fits the result limit (with headroom for the JSON-RPC envelope).
+    static func fits(_ payload: [String: JSONValue]) -> Bool {
+        JSONValue.object(payload).encoded().count <= MCPLimits.maximumResultBytes - 1_024
+    }
+
     private static func listObjects(_ args: ToolArguments, _ storage: any ObjectStorage) async throws -> Outcome {
         let bucket = try args.requiredString("bucket")
         let prefix = try args.string("prefix") ?? ""
         let delimiter = try args.string("delimiter") ?? "/"
-        let limit = try args.int("max_keys", default: MCPLimits.defaultItems, range: 1...MCPLimits.maximumItems)
-        let page = try await storage.listObjects(ListObjectsRequest(bucket: bucket, prefix: prefix, delimiter: delimiter.isEmpty ? nil : delimiter,
-                                                                    token: try decodeToken(args.string("continuation_token")), maxKeys: limit))
-        return Outcome(payload: [
-            "bucket": .string(bucket),
-            "prefix": .string(prefix),
-            "objects": .array(page.objects.map { object in
-                .object(["key": .string(object.key), "size": .int(object.size), "lastModified": .from(object.lastModified),
-                         "eTag": .from(object.eTag), "storageClass": .from(object.storageClass)])
-            }),
-            "commonPrefixes": .array(page.commonPrefixes.map(JSONValue.string)),
-            "isTruncated": .bool(page.isTruncated),
-            "nextContinuationToken": page.isTruncated ? encodeToken(page.nextToken) : .null,
-        ], items: page.objects.count + page.commonPrefixes.count)
+        let requested = try args.int("max_keys", default: MCPLimits.defaultItems, range: 1...MCPLimits.maximumItems)
+        let token = try decodeToken(args.string("continuation_token"))
+        var limit = requested
+        while true {
+            // Ask the server for fewer keys rather than cutting a page: its continuation token stays exact.
+            let page = try await storage.listObjects(ListObjectsRequest(bucket: bucket, prefix: prefix, delimiter: delimiter.isEmpty ? nil : delimiter,
+                                                                        token: token, maxKeys: limit))
+            var payload: [String: JSONValue] = [
+                "bucket": .string(bucket),
+                "prefix": .string(prefix),
+                "objects": .array(page.objects.map { object in
+                    .object(["key": .string(object.key), "size": .int(object.size), "lastModified": .from(object.lastModified),
+                             "eTag": .from(object.eTag), "storageClass": .from(object.storageClass)])
+                }),
+                "commonPrefixes": .array(page.commonPrefixes.map(JSONValue.string)),
+                "isTruncated": .bool(page.isTruncated),
+                "nextContinuationToken": page.isTruncated ? encodeToken(page.nextToken) : .null,
+            ]
+            if limit < requested { payload["pageSizeReduced"] = .bool(true) }
+            if fits(payload) || limit == 1 { return Outcome(payload: payload, items: page.objects.count + page.commonPrefixes.count) }
+            limit = max(1, limit / 2)
+        }
     }
 
     private static func headObject(_ args: ToolArguments, _ storage: any ObjectStorage) async throws -> Outcome {
@@ -210,54 +223,78 @@ enum BucketTools {
                                      "totalSize": .int(0), "truncated": .bool(false), "contentType": .from(metadata.contentType), "text": .string("")], items: 0)
         }
         guard offset < metadata.size else { throw ToolError("offset \(offset) is beyond the end of the object (\(metadata.size) bytes).") }
-        let last = min(metadata.size, offset + maxBytes) - 1
+        // Overflow-safe end of range: never compute offset + maxBytes when it could exceed the size.
+        let last = (metadata.size - offset > maxBytes ? offset + maxBytes : metadata.size) - 1
         guard let range = ByteRange(first: offset, last: last) else { throw ToolError("Invalid range.") }
         let data = try await storage.getObject(bucket: bucket, key: key, versionID: versionID, range: range, maxBytes: Int(range.length) + 1).data
-        guard !data.contains(0), let text = decodeUTF8(data, droppingLeadingContinuation: offset > 0) else {
+        guard !data.contains(0), let decoded = decodeUTF8(data, droppingLeadingContinuation: offset > 0) else {
             throw ToolError("“\(key)” is not text (binary or not UTF-8); use head_object for its metadata.")
         }
-        let bytesRead = Int64(data.count)
-        return Outcome(payload: [
-            "bucket": .string(bucket), "key": .string(key), "offset": .int(offset), "bytesRead": .int(bytesRead),
-            "totalSize": .int(metadata.size), "truncated": .bool(offset + bytesRead < metadata.size),
-            "contentType": .from(metadata.contentType), "text": .string(text),
-        ], items: 1)
+        var text = decoded.text
+        func payload(_ text: String) -> [String: JSONValue] {
+            // bytesRead counts exactly the bytes consumed, so offset + bytesRead is where the next read continues.
+            let bytesRead = Int64(decoded.skippedLeadingBytes + text.utf8.count)
+            return ["bucket": .string(bucket), "key": .string(key), "offset": .int(offset), "bytesRead": .int(bytesRead),
+                    "totalSize": .int(metadata.size), "truncated": .bool(offset + bytesRead < metadata.size),
+                    "contentType": .from(metadata.contentType), "text": .string(text)]
+        }
+        var result = payload(text)
+        if !fits(result) {
+            // JSON escaping can grow text a lot; return fewer characters and say so (bytesRead stays exact).
+            var low = 0
+            var high = text.count
+            while low < high {
+                let mid = (low + high + 1) / 2
+                if fits(payload(String(text.prefix(mid)))) { low = mid } else { high = mid - 1 }
+            }
+            text = String(text.prefix(low))
+            result = payload(text)
+            result["resultShortened"] = .bool(true)
+        }
+        return Outcome(payload: result, items: 1)
     }
 
     /// Decodes UTF-8, tolerating a character split at either end of the range.
-    static func decodeUTF8(_ data: Data, droppingLeadingContinuation: Bool) -> String? {
+    static func decodeUTF8(_ data: Data, droppingLeadingContinuation: Bool) -> (text: String, skippedLeadingBytes: Int)? {
         var slice = data[...]
+        var skipped = 0
         if droppingLeadingContinuation {
-            var dropped = 0
-            while let first = slice.first, first & 0xC0 == 0x80, dropped < 3 {
+            while let first = slice.first, first & 0xC0 == 0x80, skipped < 3 {
                 slice = slice.dropFirst()
-                dropped += 1
+                skipped += 1
             }
         }
         for trim in 0...3 where slice.count >= trim {
-            if let text = String(data: Data(slice.dropLast(trim)), encoding: .utf8) { return text }
+            if let text = String(data: Data(slice.dropLast(trim)), encoding: .utf8) { return (text, skipped) }
         }
         return nil
     }
 
     private static func versions(_ args: ToolArguments, _ storage: any ObjectStorage) async throws -> Outcome {
         let bucket = try args.requiredString("bucket")
-        let limit = try args.int("max_keys", default: MCPLimits.defaultItems, range: 1...MCPLimits.maximumItems)
-        let page = try await storage.listObjectVersions(VersionListRequest(bucket: bucket, prefix: try args.string("prefix") ?? "", delimiter: nil,
-                                                                           keyMarker: try args.string("key_marker"),
-                                                                           versionIDMarker: try args.string("version_id_marker"), maxKeys: limit))
-        let shown = page.versions.prefix(limit)
-        return Outcome(payload: [
-            "bucket": .string(bucket),
-            "versions": .array(shown.map { version in
-                .object(["key": .string(version.key), "versionId": .string(version.versionID), "isLatest": .bool(version.isLatest),
-                         "isDeleteMarker": .bool(version.isDeleteMarker), "size": .int(version.size), "lastModified": .from(version.lastModified),
-                         "eTag": .from(version.eTag)])
-            }),
-            "isTruncated": .bool(page.isTruncated),
-            "nextKeyMarker": .from(page.nextKeyMarker),
-            "nextVersionIdMarker": .from(page.nextVersionIDMarker),
-        ], items: shown.count)
+        let requested = try args.int("max_keys", default: MCPLimits.defaultItems, range: 1...MCPLimits.maximumItems)
+        let prefix = try args.string("prefix") ?? ""
+        let keyMarker = try args.string("key_marker")
+        let versionMarker = try args.string("version_id_marker")
+        var limit = requested
+        while true {
+            let page = try await storage.listObjectVersions(VersionListRequest(bucket: bucket, prefix: prefix, delimiter: nil, keyMarker: keyMarker,
+                                                                               versionIDMarker: versionMarker, maxKeys: limit))
+            var payload: [String: JSONValue] = [
+                "bucket": .string(bucket),
+                "versions": .array(page.versions.map { version in
+                    .object(["key": .string(version.key), "versionId": .string(version.versionID), "isLatest": .bool(version.isLatest),
+                             "isDeleteMarker": .bool(version.isDeleteMarker), "size": .int(version.size), "lastModified": .from(version.lastModified),
+                             "eTag": .from(version.eTag)])
+                }),
+                "isTruncated": .bool(page.isTruncated),
+                "nextKeyMarker": .from(page.nextKeyMarker),
+                "nextVersionIdMarker": .from(page.nextVersionIDMarker),
+            ]
+            if limit < requested { payload["pageSizeReduced"] = .bool(true) }
+            if fits(payload) || limit == 1 { return Outcome(payload: payload, items: page.versions.count) }
+            limit = max(1, limit / 2)
+        }
     }
 
     private static func putText(_ args: ToolArguments, _ storage: any ObjectStorage) async throws -> Outcome {

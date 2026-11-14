@@ -82,6 +82,9 @@ final class BrowserModel {
     private var busyTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var generation = 0
+    /// Rows received but not yet merged into `rows` (presentation is throttled while loading everything).
+    private var pendingRows: [ListingRow] = []
+    private var lastPresented = Date.distantPast
 
     /// Folder operations refuse to enumerate more keys than this (memory and safety bound).
     static let enumerationLimit = 1_000_000
@@ -177,6 +180,7 @@ final class BrowserModel {
         isLoadingAll = false
         error = nil
         isLoading = true
+        pendingRows = []
         applyRows([], keepSelection: true)
         loadTask = Task { [weak self] in
             await self?.loadNextPage(generation: current)
@@ -227,6 +231,7 @@ final class BrowserModel {
             }
             self?.isLoadingAll = false
             self?.isLoadingMore = false
+            await self?.flushPending(generation: current)
         }
     }
 
@@ -234,6 +239,13 @@ final class BrowserModel {
         loadTask?.cancel()
         isLoadingAll = false
         isLoadingMore = false
+        let current = generation
+        Task { [weak self] in await self?.flushPending(generation: current) }
+    }
+
+    private func flushPending(generation current: Int) async {
+        guard !pendingRows.isEmpty, current == generation else { return }
+        await present([], generation: current)
     }
 
     private func loadNextPage(generation current: Int) async {
@@ -244,19 +256,23 @@ final class BrowserModel {
                 let token = accumulator.nextToken
                 let page = try await storage.listObjects(ListObjectsRequest(bucket: bucket, prefix: listingPrefix, token: token))
                 guard current == generation, !Task.isCancelled else { return }
+                let (folderCount, objectCount) = (accumulator.folderCount, accumulator.objectCount)
                 accumulator.append(page)
                 hasMore = !accumulator.isComplete
-                await present(accumulator.folders + accumulator.objects, generation: current)
+                await present(Array(accumulator.folders.dropFirst(folderCount)) + Array(accumulator.objects.dropFirst(objectCount)), generation: current)
             case .versions:
                 let page = try await storage.listObjectVersions(VersionListRequest(bucket: bucket, prefix: listingPrefix, keyMarker: versionMarker.key,
                                                                                     versionIDMarker: versionMarker.version))
                 guard current == generation, !Task.isCancelled else { return }
                 let known = Set(versionFolders.map(\.key))
-                versionFolders += page.commonPrefixes.filter { !known.contains($0) }.map { ListingRow.folder($0, prefix: prefix) }
-                versionItems += ListingRow.versionRows(page.versions, prefix: prefix)
-                versionMarker = (page.nextKeyMarker, page.nextVersionIDMarker)
-                hasMore = page.isTruncated && (page.nextKeyMarker != nil || page.nextVersionIDMarker != nil)
-                await present(versionFolders + versionItems, generation: current)
+                let newFolders = page.commonPrefixes.filter { !known.contains($0) }.map { ListingRow.folder($0, prefix: prefix) }
+                let newItems = ListingRow.versionRows(page.versions, prefix: prefix)
+                versionFolders += newFolders
+                versionItems += newItems
+                let nextMarker = (page.nextKeyMarker, page.nextVersionIDMarker)
+                hasMore = page.isTruncated && (nextMarker.0 != nil || nextMarker.1 != nil) && (nextMarker.0 != versionMarker.key || nextMarker.1 != versionMarker.version)
+                versionMarker = nextMarker
+                await present(newFolders + newItems, generation: current)
             }
         } catch {
             guard current == generation else { return }
@@ -266,18 +282,44 @@ final class BrowserModel {
         }
     }
 
-    /// Sorts (off the main actor for large listings) and publishes rows.
-    private func present(_ unsorted: [ListingRow], generation current: Int) async {
+    /// Merges newly listed rows into the sorted rows (off the main actor for large listings) and publishes them.
+    /// While "Load All" runs, presentation is throttled so a million keys never cause quadratic main-thread work.
+    private func present(_ newRows: [ListingRow], generation current: Int) async {
+        pendingRows += newRows
+        if isLoadingAll, hasMore, Date().timeIntervalSince(lastPresented) < 0.75 { return }
+        let incoming = pendingRows
+        pendingRows = []
+        let existing = rows
         let column = sortColumn
         let ascending = sortAscending
-        let preserveServerOrder = mode == .versions && column == .name && ascending
-        let sorted: [ListingRow]
-        if preserveServerOrder {
-            sorted = unsorted.filter(\.isFolder) + unsorted.filter { !$0.isFolder }
-        } else if unsorted.count > 3_000 {
-            sorted = await Task.detached(priority: .userInitiated) { ListingSorter.sorted(unsorted, by: column, ascending: ascending) }.value
+        let merged: [ListingRow]
+        if mode == .versions && column == .name && ascending {
+            // Server order (key, newest version first), folders first.
+            merged = existing.filter(\.isFolder) + incoming.filter(\.isFolder) + existing.filter { !$0.isFolder } + incoming.filter { !$0.isFolder }
+        } else if existing.count + incoming.count > 3_000 {
+            merged = await Task.detached(priority: .userInitiated) {
+                ListingSorter.merging(existing, with: incoming, by: column, ascending: ascending)
+            }.value
         } else {
-            sorted = ListingSorter.sorted(unsorted, by: column, ascending: ascending)
+            merged = ListingSorter.merging(existing, with: incoming, by: column, ascending: ascending)
+        }
+        guard current == generation else { return }
+        lastPresented = Date()
+        applyRows(merged, keepSelection: true)
+    }
+
+    /// Re-sorts everything after the sort order changed.
+    private func resort(generation current: Int) async {
+        let all = rows + pendingRows
+        pendingRows = []
+        let column = sortColumn
+        let ascending = sortAscending
+        let sorted: [ListingRow]
+        if mode == .versions && column == .name && ascending {
+            let unsorted = versionFolders + versionItems
+            sorted = unsorted.filter(\.isFolder) + unsorted.filter { !$0.isFolder }
+        } else {
+            sorted = await Task.detached(priority: .userInitiated) { ListingSorter.sorted(all, by: column, ascending: ascending) }.value
         }
         guard current == generation else { return }
         applyRows(sorted, keepSelection: true)
@@ -288,9 +330,8 @@ final class BrowserModel {
         sortColumn = column
         sortAscending = ascending
         let current = generation
-        let unsorted = mode == .objects ? accumulator.folders + accumulator.objects : versionFolders + versionItems
         sortTask?.cancel()
-        sortTask = Task { [weak self] in await self?.present(unsorted, generation: current) }
+        sortTask = Task { [weak self] in await self?.resort(generation: current) }
     }
 
     private func applyRows(_ newRows: [ListingRow], keepSelection: Bool) {
@@ -359,7 +400,9 @@ final class BrowserModel {
             try Task.checkCancellation()
             let page = try await storage.listObjects(ListObjectsRequest(bucket: bucket, prefix: prefix, delimiter: nil, token: token))
             if !page.objects.isEmpty, try !body(page.objects) { return }
-            token = page.isTruncated ? page.nextToken : nil
+            let next = page.isTruncated ? page.nextToken : nil
+            guard next != token else { throw StorageError.invalidResponse("The server returned the same listing page twice.") }
+            token = next
         } while token != nil
     }
 
@@ -461,22 +504,19 @@ final class BrowserModel {
         guard !rows.isEmpty else { return }
         runBusy("Preparing download…") { [weak self] in
             guard let self, let workspace = self.workspace else { return }
-            var items: [TransferItem] = []
-            var reserved = Set<String>()
+            var sources: [DownloadPlanner.Source] = []
             for row in rows {
-                let objects = try await self.expand([row])
-                for object in objects {
-                    guard var url = LocalPathMapper.localURL(forKey: object.key, relativeTo: self.prefix, root: directory) else { continue }
-                    url = LocalPathMapper.uniqueURL(for: url)
-                    while reserved.contains(url.path) {
-                        url = url.deletingLastPathComponent().appendingPathComponent("\(url.deletingPathExtension().lastPathComponent) copy"
-                            + (url.pathExtension.isEmpty ? "" : ".\(url.pathExtension)"))
-                    }
-                    reserved.insert(url.path)
-                    let versionID = row.kind == .version ? row.version?.versionID : nil
-                    items.append(TransferItem(kind: .download(bucket: self.bucket, key: object.key, versionID: versionID, destination: url), size: object.size))
+                let versionID = row.kind == .version ? row.version?.versionID : nil
+                for object in try await self.expand([row]) {
+                    sources.append(DownloadPlanner.Source(key: object.key, size: object.size, versionID: versionID))
                 }
             }
+            let bucket = self.bucket
+            let prefix = self.prefix
+            // Mapping and existence checks for up to a million objects run off the main actor.
+            let items = await Task.detached(priority: .userInitiated) {
+                DownloadPlanner.plan(sources, bucket: bucket, relativeTo: prefix, root: directory)
+            }.value
             guard !items.isEmpty else {
                 self.toast("There is nothing to download.")
                 return
@@ -585,6 +625,14 @@ final class BrowserModel {
     /// Copies or moves rows to `bucket`/`prefix` by server-side copy (folders keep their name).
     func transfer(_ rows: [ListingRow], toBucket destinationBucket: String, prefix destinationPrefix: String, move: Bool, renameTo: String? = nil) {
         guard !rows.isEmpty, !refuseIfReadOnly() else { return }
+        if move, rows.contains(where: { $0.kind == .version }) {
+            toast("Versions can be copied or restored, not moved.", isError: true)
+            return
+        }
+        if rows.contains(where: { $0.kind == .version }), rows.contains(where: { $0.kind != .version }) {
+            toast("Select either versions or current objects, not both.", isError: true)
+            return
+        }
         for row in rows where row.isFolder && destinationBucket == bucket && destinationPrefix.hasPrefix(row.key) {
             toast("Cannot \(move ? "move" : "copy") “\(row.name)” into itself.", isError: true)
             return
@@ -631,10 +679,7 @@ final class BrowserModel {
     // MARK: Sharing
 
     func presignedURL(for row: ListingRow, expires: Int, downloadName: String?) async throws -> URL {
-        let disposition = downloadName.map { name -> String in
-            let ascii = name.unicodeScalars.allSatisfy { $0.isASCII && $0 != "\"" && $0.value >= 0x20 } ? name : "download"
-            return "attachment; filename=\"\(ascii)\"; filename*=UTF-8''\(name.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "download")"
-        }
+        let disposition = downloadName.map(ContentDisposition.attachment(filename:))
         return try await storage.presignedURL(bucket: bucket, key: row.key, versionID: row.version?.versionID, method: "GET",
                                               expires: expires, responseContentDisposition: disposition)
     }

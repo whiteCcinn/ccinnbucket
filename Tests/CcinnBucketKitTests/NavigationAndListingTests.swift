@@ -114,3 +114,38 @@ struct NavigationAndListingTests {
         #expect(rows.first?.version?.isDeleteMarker == true)
     }
 }
+
+@Suite("Listing merge and download planning")
+struct ListingMergeTests {
+    @Test("merging sorted pages equals sorting everything", arguments: ListingSortColumn.allCases)
+    func merge(_ column: ListingSortColumn) {
+        var generator = SystemRandomNumberGenerator()
+        func row(_ index: Int) -> ListingRow {
+            index.isMultiple(of: 17) ? .folder("p/folder\(index)/", prefix: "p/")
+                : .object(ObjectEntry(key: "p/File\(Int.random(in: 0..<500, using: &generator))-\(index).txt", size: Int64.random(in: 0..<100, using: &generator),
+                                      lastModified: Date(timeIntervalSince1970: Double(Int.random(in: 0..<50, using: &generator))),
+                                      storageClass: ["STANDARD", "GLACIER", nil].randomElement(using: &generator) ?? nil), prefix: "p/")
+        }
+        for ascending in [true, false] {
+            let pages = (0..<5).map { page in (0..<300).map { row(page * 1_000 + $0) } }
+            var merged: [ListingRow] = []
+            for page in pages { merged = ListingSorter.merging(merged, with: page, by: column, ascending: ascending) }
+            #expect(merged.map(\.id) == ListingSorter.sorted(pages.flatMap { $0 }, by: column, ascending: ascending).map(\.id))
+        }
+    }
+
+    @Test("download plans keep case- and Unicode-variant keys apart")
+    func downloadPlan() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ccinnbucket-plan-\(UUID().uuidString)")
+        let items = DownloadPlanner.plan([.init(key: "docs/README.md", size: 1), .init(key: "docs/readme.md", size: 2),
+                                          .init(key: "docs/café.txt".precomposedStringWithCanonicalMapping, size: 3),
+                                          .init(key: "docs/café.txt".decomposedStringWithCanonicalMapping, size: 4), .init(key: "docs/sub/", size: 0)],
+                                         bucket: "b", relativeTo: "", root: root)
+        let destinations = items.compactMap { item -> String? in
+            if case let .download(_, _, _, destination) = item.kind { return LocalPathMapper.reservationKey(destination) }
+            return nil
+        }
+        #expect(destinations.count == 4)
+        #expect(Set(destinations).count == 4)
+    }
+}

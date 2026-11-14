@@ -130,3 +130,48 @@ struct TransferLogicTests {
         #expect(!KeyRewrite.isInside("a/folderx", folder: "a/folder/"))
     }
 }
+
+@Suite("Review regressions: app logic")
+struct AppLogicReviewTests {
+    @Test("unique destinations account for in-flight partial files and case/Unicode-insensitive reservations")
+    func uniqueDestinations() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ccinnbucket-unique-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("report.pdf")
+        FileManager.default.createFile(atPath: target.path + ".ccinnbucket-partial", contents: Data())
+        #expect(LocalPathMapper.uniqueURL(for: target).lastPathComponent == "report 2.pdf")
+        let reserved: Set<String> = [LocalPathMapper.reservationKey(directory.appendingPathComponent("README.md"))]
+        #expect(LocalPathMapper.uniqueURL(for: directory.appendingPathComponent("readme.md"), reserved: reserved).lastPathComponent == "readme 2.md")
+        let decomposed = directory.appendingPathComponent("café.txt".decomposedStringWithCanonicalMapping)
+        let composed = directory.appendingPathComponent("café.txt".precomposedStringWithCanonicalMapping)
+        #expect(LocalPathMapper.reservationKey(decomposed) == LocalPathMapper.reservationKey(composed))
+    }
+
+    @Test("long names leave room for the in-flight suffix")
+    func roomForSuffix() throws {
+        let url = try #require(LocalPathMapper.localURL(forKey: String(repeating: "a", count: 300) + ".bin", relativeTo: "", root: URL(fileURLWithPath: "/tmp")))
+        #expect((url.lastPathComponent + ".ccinnbucket-partial.json").utf8.count <= 255)
+    }
+
+    @Test("download-as filenames use RFC 5987 encoding for non-ASCII names")
+    func contentDisposition() {
+        #expect(ContentDisposition.attachment(filename: "报告 1.pdf") == "attachment; filename=\"__ 1.pdf\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A%201.pdf")
+        #expect(ContentDisposition.attachment(filename: "a\"b.txt").contains("filename=\"a_b.txt\""))
+    }
+
+    @Test("saving a stale editor draft keeps changes made elsewhere")
+    func accountMerge() {
+        var base = StorageAccount(kind: .minio, name: "A", accessKeyID: "k")
+        base.mcpAccess = .readWrite
+        var latest = base
+        latest.mcpAccess = .disabled // changed in Settings → MCP meanwhile
+        latest.isFavorite = true
+        var edited = base
+        edited.region = "eu-west-1" // the user's edit in the open editor
+        let merged = StorageAccount.merged(base: base, edited: edited, latest: latest)
+        #expect(merged.mcpAccess == .disabled)
+        #expect(merged.isFavorite)
+        #expect(merged.region == "eu-west-1")
+    }
+}

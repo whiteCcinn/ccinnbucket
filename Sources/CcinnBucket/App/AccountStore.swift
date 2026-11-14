@@ -47,6 +47,13 @@ final class AccountStore {
         return account
     }
 
+    /// Updates account fields only; Keychain secrets are not touched (a failed Keychain read can never erase them).
+    func update(_ account: StorageAccount) {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+        accounts[index] = account
+        try? persist()
+    }
+
     func delete(_ account: StorageAccount) {
         accounts.removeAll { $0.id == account.id }
         try? repository.delete(account)
