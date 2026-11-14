@@ -1,0 +1,98 @@
+{
+  "cases": [
+    {
+      "awsDoc": true,
+      "credentials": "example",
+      "documentedSignature": "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+      "expected": {
+        "canonicalRequest": "GET\n/test.txt\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host\nhost:examplebucket.s3.amazonaws.com\n\nhost\nUNSIGNED-PAYLOAD",
+        "encodedPath": "/test.txt",
+        "signature": "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404",
+        "stringToSign": "AWS4-HMAC-SHA256\n20130524T000000Z\n20130524/us-east-1/s3/aws4_request\n3bfa292879f6447bbcda7001decf97f4a54dc650c8942174ae0a9121cf58ad04",
+        "url": "https://examplebucket.s3.amazonaws.com/test.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host&X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404"
+      },
+      "expires": 86400,
+      "host": "examplebucket.s3.amazonaws.com",
+      "method": "GET",
+      "name": "aws-doc-presign-get",
+      "path": "/test.txt",
+      "region": "us-east-1",
+      "scheme": "https",
+      "timestamp": "20130524T000000Z"
+    },
+    {
+      "credentials": "sts",
+      "expected": {
+        "canonicalRequest": "GET\n/photos/2024/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB/na%C3%AFve%20caf%C3%A9%20%E2%9C%93.txt\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLESTSKEY123%2F20261114%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20261114T083015Z&X-Amz-Expires=3600&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEXAMPLE%2Ftoken%2Bwith%3Dspecial%26chars%3D%3D&X-Amz-SignedHeaders=host&response-content-disposition=attachment%3B%20filename%3D%22r%C3%A9sum%C3%A9.pdf%22&versionId=v%2B1%2F2%3D%3D\nhost:bucket.s3.eu-central-1.amazonaws.com\n\nhost\nUNSIGNED-PAYLOAD",
+        "encodedPath": "/photos/2024/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB/na%C3%AFve%20caf%C3%A9%20%E2%9C%93.txt",
+        "signature": "b955cbde6ea4c465f9afc0d16eb941f9b2960166801122fcac274dab270c4697",
+        "stringToSign": "AWS4-HMAC-SHA256\n20261114T083015Z\n20261114/eu-central-1/s3/aws4_request\n1bb93aeb8ab192583c1680bbe1956a92b9410d97cf869a7ffaec0080d74a5d15",
+        "url": "https://bucket.s3.eu-central-1.amazonaws.com/photos/2024/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB/na%C3%AFve%20caf%C3%A9%20%E2%9C%93.txt?versionId=v%2B1%2F2%3D%3D&response-content-disposition=attachment%3B%20filename%3D%22r%C3%A9sum%C3%A9.pdf%22&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLESTSKEY123%2F20261114%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20261114T083015Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEXAMPLE%2Ftoken%2Bwith%3Dspecial%26chars%3D%3D&X-Amz-Signature=b955cbde6ea4c465f9afc0d16eb941f9b2960166801122fcac274dab270c4697"
+      },
+      "expires": 3600,
+      "host": "bucket.s3.eu-central-1.amazonaws.com",
+      "method": "GET",
+      "name": "presign-sts-version-disposition",
+      "path": "/photos/2024/日本語 ファイル/naïve café ✓.txt",
+      "query": [
+        [
+          "versionId",
+          "v+1/2=="
+        ],
+        [
+          "response-content-disposition",
+          "attachment; filename=\"résumé.pdf\""
+        ]
+      ],
+      "region": "eu-central-1",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z"
+    },
+    {
+      "credentials": "example",
+      "expected": {
+        "canonicalRequest": "PUT\n/ccinn-demo/uploads/a%2Bb~c%20d%25e%26f%3Dg%40h%3Ai%2Cj%3Bk%24l%21m%27n%28o%29p%2Aq%5Br%5Ds%23t%3Fu\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20261114%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261114T083015Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host\nhost:127.0.0.1:19900\n\nhost\nUNSIGNED-PAYLOAD",
+        "encodedPath": "/ccinn-demo/uploads/a%2Bb~c%20d%25e%26f%3Dg%40h%3Ai%2Cj%3Bk%24l%21m%27n%28o%29p%2Aq%5Br%5Ds%23t%3Fu",
+        "signature": "c6bb1bfd0b8798b0e3df12171fde2c2ddbe909db40f31877d27ab94e397c93cb",
+        "stringToSign": "AWS4-HMAC-SHA256\n20261114T083015Z\n20261114/us-east-1/s3/aws4_request\n24d47e25274cf96f8ae1a6e0bffe4d6ba4a9962289c590200e6ca8b15870d988",
+        "url": "http://127.0.0.1:19900/ccinn-demo/uploads/a%2Bb~c%20d%25e%26f%3Dg%40h%3Ai%2Cj%3Bk%24l%21m%27n%28o%29p%2Aq%5Br%5Ds%23t%3Fu?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20261114%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261114T083015Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=c6bb1bfd0b8798b0e3df12171fde2c2ddbe909db40f31877d27ab94e397c93cb"
+      },
+      "expires": 604800,
+      "host": "127.0.0.1:19900",
+      "method": "PUT",
+      "name": "presign-path-style-put",
+      "path": "/ccinn-demo/uploads/a+b~c d%e&f=g@h:i,j;k$l!m'n(o)p*q[r]s#t?u",
+      "region": "us-east-1",
+      "scheme": "http",
+      "timestamp": "20261114T083015Z"
+    }
+  ],
+  "credentials": {
+    "example": {
+      "accessKeyID": "AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "sessionToken": null
+    },
+    "oss": {
+      "accessKeyID": "LTAI5tEXAMPLEaccessKey",
+      "secretAccessKey": "OSSExampleSecret0123456789abcdef",
+      "sessionToken": null
+    },
+    "oss-sts": {
+      "accessKeyID": "STS.NUexampleAccessKeyId",
+      "secretAccessKey": "STSexampleSecret/With+Slash=",
+      "sessionToken": "CAIS+example/sts=token&value=="
+    },
+    "sts": {
+      "accessKeyID": "ASIAEXAMPLESTSKEY123",
+      "secretAccessKey": "Tmp/Secret+Key=Example0123456789abcdefGH",
+      "sessionToken": "IQoJb3JpZ2luX2VjEXAMPLE/token+with=special&chars=="
+    }
+  },
+  "generator": "scripts/vectors/generate_signing_vectors.py",
+  "sdks": {
+    "alibabacloud-oss-v2": "1.4.1",
+    "botocore": "1.42.97",
+    "oss2": "2.19.1"
+  }
+}

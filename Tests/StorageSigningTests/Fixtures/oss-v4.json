@@ -1,0 +1,304 @@
+{
+  "cases": [
+    {
+      "bucket": "examplebucket",
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS4-HMAC-SHA256 Credential=LTAI5tEXAMPLEaccessKey/20261114/cn-hangzhou/oss/aliyun_v4_request,Signature=58df153cecab0954cba44994e149d31b1607bf24a34701e29fd6619c20de51fe",
+        "contentSHA256": "UNSIGNED-PAYLOAD",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "encodedPath": "/exampleobject",
+        "ossDate": "20261114T083015Z",
+        "securityToken": null,
+        "stringToSign": "OSS4-HMAC-SHA256\n20261114T083015Z\n20261114/cn-hangzhou/oss/aliyun_v4_request\nbfb03e6cd4c8f3dabcfa76432f4bc7c9fc4e392c38ab065d1fec7f43036c8560"
+      },
+      "headers": [
+        [
+          "Content-Type",
+          "text/plain"
+        ],
+        [
+          "x-oss-meta-author",
+          "ccinn"
+        ],
+        [
+          "x-oss-storage-class",
+          "IA"
+        ]
+      ],
+      "host": "examplebucket.oss-cn-hangzhou.aliyuncs.com",
+      "key": "exampleobject",
+      "method": "PUT",
+      "name": "oss4-put-object",
+      "region": "cn-hangzhou",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z",
+      "url": "https://examplebucket.oss-cn-hangzhou.aliyuncs.com/exampleobject"
+    },
+    {
+      "bucket": "bucket-a",
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS4-HMAC-SHA256 Credential=LTAI5tEXAMPLEaccessKey/20261114/cn-shanghai/oss/aliyun_v4_request,Signature=3b741c91bc055f94feb41d95369c70866720bb157fde0bb971d2f37c0198012d",
+        "contentSHA256": "UNSIGNED-PAYLOAD",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "encodedPath": "/photos/2024/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB/na%C3%AFve%20caf%C3%A9%20%E2%9C%93.txt",
+        "ossDate": "20261114T083015Z",
+        "securityToken": null,
+        "stringToSign": "OSS4-HMAC-SHA256\n20261114T083015Z\n20261114/cn-shanghai/oss/aliyun_v4_request\nd221b2e1e55f4a8ca43982be02205ce2fc034223f07754704c9390386439f9c1"
+      },
+      "host": "bucket-a.oss-cn-shanghai.aliyuncs.com",
+      "key": "photos/2024/日本語 ファイル/naïve café ✓.txt",
+      "method": "GET",
+      "name": "oss4-get-unicode-subresources",
+      "query": [
+        [
+          "versionId",
+          "CAEQNhiBgM0BYiIDc4MGZjZGI2OTBjOTRmNTE5NmU5NmFhZjhjYmY0"
+        ],
+        [
+          "response-content-disposition",
+          "attachment; filename=\"résumé.pdf\""
+        ]
+      ],
+      "region": "cn-shanghai",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z",
+      "url": "https://bucket-a.oss-cn-shanghai.aliyuncs.com/photos/2024/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%E3%83%95%E3%82%A1%E3%82%A4%E3%83%AB/na%C3%AFve%20caf%C3%A9%20%E2%9C%93.txt?versionId=CAEQNhiBgM0BYiIDc4MGZjZGI2OTBjOTRmNTE5NmU5NmFhZjhjYmY0&response-content-disposition=attachment%3B%20filename%3D%22r%C3%A9sum%C3%A9.pdf%22"
+    },
+    {
+      "bucket": "bucket",
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS4-HMAC-SHA256 Credential=LTAI5tEXAMPLEaccessKey/20261114/cn-hangzhou/oss/aliyun_v4_request,Signature=a3c2ab57ca1b565bcd8b0c5fb82290a7376e265525887f74c71307e03018b827",
+        "contentSHA256": "UNSIGNED-PAYLOAD",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "encodedPath": "/",
+        "ossDate": "20261114T083015Z",
+        "securityToken": null,
+        "stringToSign": "OSS4-HMAC-SHA256\n20261114T083015Z\n20261114/cn-hangzhou/oss/aliyun_v4_request\nd206b33eb29e35621e22020f0a4df09a90252e8074cbcd35905228fd6d24b8e9"
+      },
+      "host": "bucket.oss-cn-hangzhou.aliyuncs.com",
+      "method": "GET",
+      "name": "oss4-list-v2",
+      "query": [
+        [
+          "list-type",
+          "2"
+        ],
+        [
+          "prefix",
+          ""
+        ],
+        [
+          "delimiter",
+          "/"
+        ],
+        [
+          "encoding-type",
+          "url"
+        ],
+        [
+          "max-keys",
+          "1000"
+        ],
+        [
+          "continuation-token",
+          "ChR0ZXN0L+aXpeacrC8xLnR4dBAA"
+        ]
+      ],
+      "region": "cn-hangzhou",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z",
+      "url": "https://bucket.oss-cn-hangzhou.aliyuncs.com/?list-type=2&prefix=&delimiter=%2F&encoding-type=url&max-keys=1000&continuation-token=ChR0ZXN0L%2BaXpeacrC8xLnR4dBAA"
+    },
+    {
+      "additionalHeaders": [
+        "host"
+      ],
+      "bucket": "bkt",
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS4-HMAC-SHA256 Credential=LTAI5tEXAMPLEaccessKey/20261114/ap-southeast-1/oss/aliyun_v4_request,AdditionalHeaders=host,Signature=04250a1659dbc6d326d16f0600365740d2ff6039e6e970f6bff5e0dea5bb8f96",
+        "contentSHA256": "UNSIGNED-PAYLOAD",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "encodedPath": "/a%2Bb~c%20d%25e%26f%3Dg%40h%3Ai%2Cj%3Bk%24l%21m%27n%28o%29p%2Aq%5Br%5Ds%23t%3Fu",
+        "ossDate": "20261114T083015Z",
+        "securityToken": null,
+        "stringToSign": "OSS4-HMAC-SHA256\n20261114T083015Z\n20261114/ap-southeast-1/oss/aliyun_v4_request\ncae750c617bc90c0ac5a324a39244814dd9251334957b2e78031eb293f3b78cc"
+      },
+      "headers": [
+        [
+          "Host",
+          "bkt.oss-ap-southeast-1.aliyuncs.com"
+        ]
+      ],
+      "host": "bkt.oss-ap-southeast-1.aliyuncs.com",
+      "key": "a+b~c d%e&f=g@h:i,j;k$l!m'n(o)p*q[r]s#t?u",
+      "method": "DELETE",
+      "name": "oss4-special-key-additional-host",
+      "region": "ap-southeast-1",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z",
+      "url": "https://bkt.oss-ap-southeast-1.aliyuncs.com/a%2Bb~c%20d%25e%26f%3Dg%40h%3Ai%2Cj%3Bk%24l%21m%27n%28o%29p%2Aq%5Br%5Ds%23t%3Fu"
+    },
+    {
+      "bucket": "bkt",
+      "credentials": "oss-sts",
+      "expected": {
+        "authorization": "OSS4-HMAC-SHA256 Credential=STS.NUexampleAccessKeyId/20261114/cn-beijing/oss/aliyun_v4_request,Signature=84e2d072606ff5fad484cf26023e620236c2d60ff1aa96cd5d4dc524d89ed52e",
+        "contentSHA256": "UNSIGNED-PAYLOAD",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "encodedPath": "/big/file.iso",
+        "ossDate": "20261114T083015Z",
+        "securityToken": "CAIS+example/sts=token&value==",
+        "stringToSign": "OSS4-HMAC-SHA256\n20261114T083015Z\n20261114/cn-beijing/oss/aliyun_v4_request\n7c826b56b883efa2d44872fdc3222f678c7d1856b4f8bf4eef8995f0e48072b2"
+      },
+      "headers": [
+        [
+          "Content-Type",
+          "application/octet-stream"
+        ]
+      ],
+      "host": "bkt.oss-cn-beijing.aliyuncs.com",
+      "key": "big/file.iso",
+      "method": "POST",
+      "name": "oss4-initiate-multipart-sts",
+      "query": [
+        [
+          "uploads",
+          ""
+        ]
+      ],
+      "region": "cn-beijing",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z",
+      "url": "https://bkt.oss-cn-beijing.aliyuncs.com/big/file.iso?uploads="
+    },
+    {
+      "bucket": "bkt",
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS4-HMAC-SHA256 Credential=LTAI5tEXAMPLEaccessKey/20261114/cn-hangzhou/oss/aliyun_v4_request,Signature=178e70f7b30a16066be1832c17c912ac15a715331f6b37cc6d034ee3459ea320",
+        "contentSHA256": "UNSIGNED-PAYLOAD",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "encodedPath": "/",
+        "ossDate": "20261114T083015Z",
+        "securityToken": null,
+        "stringToSign": "OSS4-HMAC-SHA256\n20261114T083015Z\n20261114/cn-hangzhou/oss/aliyun_v4_request\nfe16a0e27979d75d3cd8257e99c29cd4e6b0ca45877a8fa1b030cd8212e694f7"
+      },
+      "headers": [
+        [
+          "Content-Type",
+          "application/xml"
+        ],
+        [
+          "Content-MD5",
+          "kO0r1Yw6dyP2yO8x7zE1oA=="
+        ]
+      ],
+      "host": "bkt.oss-cn-hangzhou-internal.aliyuncs.com",
+      "method": "POST",
+      "name": "oss4-delete-multiple",
+      "query": [
+        [
+          "delete",
+          ""
+        ]
+      ],
+      "region": "cn-hangzhou",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z",
+      "url": "https://bkt.oss-cn-hangzhou-internal.aliyuncs.com/?delete="
+    },
+    {
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS4-HMAC-SHA256 Credential=LTAI5tEXAMPLEaccessKey/20261114/cn-hangzhou/oss/aliyun_v4_request,Signature=42d2bc958246a3a06bfe80a0200a3705b42d9318a676cc11ef24cf1b7ac8a1ba",
+        "contentSHA256": "UNSIGNED-PAYLOAD",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "encodedPath": "/",
+        "ossDate": "20261114T083015Z",
+        "securityToken": null,
+        "stringToSign": "OSS4-HMAC-SHA256\n20261114T083015Z\n20261114/cn-hangzhou/oss/aliyun_v4_request\n7fe007863bc90c5cb0f2324db9b9a12741701e7c9747e7df8d88a7439152bada"
+      },
+      "host": "oss-cn-hangzhou.aliyuncs.com",
+      "method": "GET",
+      "name": "oss4-list-buckets",
+      "region": "cn-hangzhou",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z",
+      "url": "https://oss-cn-hangzhou.aliyuncs.com/"
+    },
+    {
+      "bucket": "examplebucket",
+      "credentials": "oss",
+      "expected": {
+        "encodedPath": "/dir/%E7%A4%BA%E4%BE%8B%20file.txt",
+        "stringToSign": "OSS4-HMAC-SHA256\n20261114T083015Z\n20261114/cn-hangzhou/oss/aliyun_v4_request\nf1da56e6ee8c568ae27a90ee428e4649000faa8f939ba30f4ab7ec31fabdbb1c",
+        "url": "https://examplebucket.oss-cn-hangzhou.aliyuncs.com/dir/%E7%A4%BA%E4%BE%8B%20file.txt?x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261114T083015Z&x-oss-expires=3600&x-oss-credential=LTAI5tEXAMPLEaccessKey%2F20261114%2Fcn-hangzhou%2Foss%2Faliyun_v4_request&x-oss-signature=89513309e53c356c463414d79f466dbf6b17bf0301b2d5bfe6beec5be6c67eb9"
+      },
+      "expires": 3600,
+      "host": "examplebucket.oss-cn-hangzhou.aliyuncs.com",
+      "key": "dir/示例 file.txt",
+      "method": "GET",
+      "name": "oss4-presign-get",
+      "region": "cn-hangzhou",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z",
+      "url": "https://examplebucket.oss-cn-hangzhou.aliyuncs.com/dir/%E7%A4%BA%E4%BE%8B%20file.txt"
+    },
+    {
+      "bucket": "bkt",
+      "credentials": "oss-sts",
+      "expected": {
+        "encodedPath": "/a%20b%2Bc",
+        "stringToSign": "OSS4-HMAC-SHA256\n20261114T083015Z\n20261114/eu-central-1/oss/aliyun_v4_request\n4a97cc6cde1dbdaf33b806c24b46e2d2d0d4601f4204681063219c6803443111",
+        "url": "https://bkt.oss-eu-central-1.aliyuncs.com/a%20b%2Bc?versionId=v1%2F2%2B3&x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-date=20261114T083015Z&x-oss-expires=604800&x-oss-credential=STS.NUexampleAccessKeyId%2F20261114%2Feu-central-1%2Foss%2Faliyun_v4_request&x-oss-security-token=CAIS%2Bexample%2Fsts%3Dtoken%26value%3D%3D&x-oss-signature=999e60f088ab7595287d87ae5003253f48f26711bc5505d069a4c6d234c7aa23"
+      },
+      "expires": 604800,
+      "host": "bkt.oss-eu-central-1.aliyuncs.com",
+      "key": "a b+c",
+      "method": "GET",
+      "name": "oss4-presign-sts-version",
+      "query": [
+        [
+          "versionId",
+          "v1/2+3"
+        ]
+      ],
+      "region": "eu-central-1",
+      "scheme": "https",
+      "timestamp": "20261114T083015Z",
+      "url": "https://bkt.oss-eu-central-1.aliyuncs.com/a%20b%2Bc?versionId=v1%2F2%2B3"
+    }
+  ],
+  "credentials": {
+    "example": {
+      "accessKeyID": "AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "sessionToken": null
+    },
+    "oss": {
+      "accessKeyID": "LTAI5tEXAMPLEaccessKey",
+      "secretAccessKey": "OSSExampleSecret0123456789abcdef",
+      "sessionToken": null
+    },
+    "oss-sts": {
+      "accessKeyID": "STS.NUexampleAccessKeyId",
+      "secretAccessKey": "STSexampleSecret/With+Slash=",
+      "sessionToken": "CAIS+example/sts=token&value=="
+    },
+    "sts": {
+      "accessKeyID": "ASIAEXAMPLESTSKEY123",
+      "secretAccessKey": "Tmp/Secret+Key=Example0123456789abcdefGH",
+      "sessionToken": "IQoJb3JpZ2luX2VjEXAMPLE/token+with=special&chars=="
+    }
+  },
+  "generator": "scripts/vectors/generate_signing_vectors.py",
+  "sdks": {
+    "alibabacloud-oss-v2": "1.4.1",
+    "botocore": "1.42.97",
+    "oss2": "2.19.1"
+  }
+}

@@ -1,0 +1,228 @@
+{
+  "cases": [
+    {
+      "bucket": "examplebucket",
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS LTAI5tEXAMPLEaccessKey:Fumdfryg85CvmcGqE+ugC4P0GF8=",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "securityToken": null
+      },
+      "headers": [
+        [
+          "Content-MD5",
+          "eB5eJF1ptWaXm4bijSPyxw=="
+        ],
+        [
+          "Content-Type",
+          "text/html"
+        ],
+        [
+          "x-oss-meta-author",
+          "foo@bar.com"
+        ],
+        [
+          "x-oss-magic",
+          "abracadabra"
+        ]
+      ],
+      "host": "examplebucket.oss-cn-hangzhou.aliyuncs.com",
+      "key": "nelson",
+      "method": "PUT",
+      "name": "oss1-put-object",
+      "scheme": "https"
+    },
+    {
+      "bucket": "bucket",
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS LTAI5tEXAMPLEaccessKey:EwY9y7PFVm8oTLlY5yHizcs2ozc=",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "securityToken": null
+      },
+      "host": "bucket.oss-cn-hangzhou.aliyuncs.com",
+      "key": "",
+      "method": "GET",
+      "name": "oss1-get-acl",
+      "query": [
+        [
+          "acl",
+          ""
+        ]
+      ],
+      "scheme": "https"
+    },
+    {
+      "bucket": "bucket",
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS LTAI5tEXAMPLEaccessKey:7kI/5oz5jNdfCOgUtyvNoEM0i7M=",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "securityToken": null
+      },
+      "host": "bucket.oss-cn-hangzhou.aliyuncs.com",
+      "key": "photos/2024/日本語 ファイル/naïve café ✓.txt",
+      "method": "GET",
+      "name": "oss1-get-object-response-overrides",
+      "query": [
+        [
+          "response-content-type",
+          "text/plain"
+        ],
+        [
+          "versionId",
+          "v1"
+        ],
+        [
+          "x-irrelevant",
+          "not-signed"
+        ]
+      ],
+      "scheme": "https"
+    },
+    {
+      "bucket": "bucket",
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS LTAI5tEXAMPLEaccessKey:sP7qPlk/u2s33SVj7jkWFxSWrug=",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "securityToken": null
+      },
+      "host": "bucket.oss-cn-hangzhou.aliyuncs.com",
+      "key": "",
+      "method": "GET",
+      "name": "oss1-list-v2",
+      "query": [
+        [
+          "list-type",
+          "2"
+        ],
+        [
+          "prefix",
+          "a/"
+        ],
+        [
+          "delimiter",
+          "/"
+        ],
+        [
+          "continuation-token",
+          "tok/en+=="
+        ],
+        [
+          "encoding-type",
+          "url"
+        ]
+      ],
+      "scheme": "https"
+    },
+    {
+      "bucket": "bucket",
+      "credentials": "oss-sts",
+      "expected": {
+        "authorization": "OSS STS.NUexampleAccessKeyId:uE/UAWwPcrCG/AQwGg0Pe2FjkBY=",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "securityToken": "CAIS+example/sts=token&value=="
+      },
+      "headers": [
+        [
+          "Content-MD5",
+          "kO0r1Yw6dyP2yO8x7zE1oA=="
+        ]
+      ],
+      "host": "bucket.oss-cn-hangzhou.aliyuncs.com",
+      "key": "big/file.iso",
+      "method": "PUT",
+      "name": "oss1-upload-part-sts",
+      "query": [
+        [
+          "partNumber",
+          "3"
+        ],
+        [
+          "uploadId",
+          "0004B9895DBBB6EC98E36"
+        ]
+      ],
+      "scheme": "https"
+    },
+    {
+      "credentials": "oss",
+      "expected": {
+        "authorization": "OSS LTAI5tEXAMPLEaccessKey:KDlxtPh69gQKeJILmD2rbLDMscQ=",
+        "date": "Sat, 14 Nov 2026 08:30:15 GMT",
+        "securityToken": null
+      },
+      "host": "oss-cn-hangzhou.aliyuncs.com",
+      "method": "GET",
+      "name": "oss1-list-buckets",
+      "scheme": "https"
+    },
+    {
+      "bucket": "bucket",
+      "credentials": "oss",
+      "expected": {
+        "securityToken": null,
+        "signature": "VMuSghq9AI7sgMklwtRHLuU1vuA=",
+        "url": "https://bucket.oss-cn-hangzhou.aliyuncs.com/dir/%E7%A4%BA%E4%BE%8B%20file.txt?OSSAccessKeyId=LTAI5tEXAMPLEaccessKey&Expires=1794645015&Signature=VMuSghq9AI7sgMklwtRHLuU1vuA%3D"
+      },
+      "expires": 3600,
+      "expiresAt": 1794645015,
+      "host": "bucket.oss-cn-hangzhou.aliyuncs.com",
+      "key": "dir/示例 file.txt",
+      "method": "GET",
+      "name": "oss1-presign-get",
+      "scheme": "https"
+    },
+    {
+      "bucket": "bucket",
+      "credentials": "oss-sts",
+      "expected": {
+        "securityToken": "CAIS+example/sts=token&value==",
+        "signature": "6v6cC9eqwzvF+YKjQzLkiaKZz4E=",
+        "url": "https://bucket.oss-cn-hangzhou.aliyuncs.com/a%20b%2Bc?versionId=v1%2F2%2B3&security-token=CAIS%2Bexample%2Fsts%3Dtoken%26value%3D%3D&OSSAccessKeyId=STS.NUexampleAccessKeyId&Expires=1794642015&Signature=6v6cC9eqwzvF%2BYKjQzLkiaKZz4E%3D"
+      },
+      "expires": 600,
+      "expiresAt": 1794642015,
+      "host": "bucket.oss-cn-hangzhou.aliyuncs.com",
+      "key": "a b+c",
+      "method": "GET",
+      "name": "oss1-presign-sts-version",
+      "query": [
+        [
+          "versionId",
+          "v1/2+3"
+        ]
+      ],
+      "scheme": "https"
+    }
+  ],
+  "credentials": {
+    "example": {
+      "accessKeyID": "AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "sessionToken": null
+    },
+    "oss": {
+      "accessKeyID": "LTAI5tEXAMPLEaccessKey",
+      "secretAccessKey": "OSSExampleSecret0123456789abcdef",
+      "sessionToken": null
+    },
+    "oss-sts": {
+      "accessKeyID": "STS.NUexampleAccessKeyId",
+      "secretAccessKey": "STSexampleSecret/With+Slash=",
+      "sessionToken": "CAIS+example/sts=token&value=="
+    },
+    "sts": {
+      "accessKeyID": "ASIAEXAMPLESTSKEY123",
+      "secretAccessKey": "Tmp/Secret+Key=Example0123456789abcdefGH",
+      "sessionToken": "IQoJb3JpZ2luX2VjEXAMPLE/token+with=special&chars=="
+    }
+  },
+  "generator": "scripts/vectors/generate_signing_vectors.py",
+  "sdks": {
+    "alibabacloud-oss-v2": "1.4.1",
+    "botocore": "1.42.97",
+    "oss2": "2.19.1"
+  }
+}
