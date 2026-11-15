@@ -23,7 +23,9 @@ struct TransferLogicTests {
         let plan = try UploadPlanner.plan([site, single], destinationPrefix: "www/")
         #expect(plan.map(\.key).sorted() == ["www/café.txt", "www/site/css/app.css", "www/site/index.html"])
         #expect(plan.first { $0.key == "www/café.txt" }?.key.unicodeScalars.count == "www/café.txt".precomposedStringWithCanonicalMapping.unicodeScalars.count)
-        #expect(plan.reduce(0) { $0 + $1.size } == 4 + 6 + 1)
+        // Explicit types: the inline `reduce` plus literal arithmetic is too slow for older type checkers (Swift 6.2 in CI).
+        let totalSize: Int64 = plan.reduce(into: 0) { $0 += $1.size }
+        #expect(totalSize == 11)
         let withHidden = try UploadPlanner.plan([site], destinationPrefix: "", includeHidden: true)
         #expect(withHidden.map(\.key).sorted() == ["site/.env", "site/css/app.css", "site/index.html"])
     }
