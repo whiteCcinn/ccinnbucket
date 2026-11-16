@@ -5,6 +5,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+
+- **Multiple windows, each with its own connection.**
+  - **File ▸ New Window with This Connection** (⌥⌘N; ⇧⌘N stays New Folder) opens another window connected to the same account with the credentials in use. It also works for accounts opened from launch arguments and for secrets that are not in the Keychain; the credentials stay in memory and are never saved.
+  - A **New Window** toolbar button on the account screen and in the workspace. In the workspace it is a split button: click to duplicate the connection, or choose an empty window from its menu.
+  - **Open in New Window** in a saved account's context menu.
+  - **File ▸ New Window** (⌘N) still opens the account screen. Closing a window disconnects only that window.
+  - Only windows opened in this session connect on their own. A window that macOS restores from an earlier session opens at the account screen.
+
+### Fixed
+
+- Closing a window while it is still connecting cancels the connection instead of finishing it in the background.
+- A connection error is shown on the account screen even when no account is selected.
+- Launch arguments such as `--open-settings` apply to the first window only, not to every new window.
+
 ## [1.1.0] - 2026-11-16
 
 ### Added
