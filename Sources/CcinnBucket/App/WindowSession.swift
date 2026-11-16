@@ -32,6 +32,12 @@ enum AccountOpener {
     }
 }
 
+/// What a window opened by this process connects with. Kept in memory only (see `WindowHandoff`).
+struct WindowConnection {
+    let account: StorageAccount
+    let credentials: SigningCredentials
+}
+
 /// State of one window: choosing an account, connecting, or connected to a workspace.
 @MainActor
 @Observable
@@ -45,6 +51,12 @@ final class WindowSession {
     var phase: Phase = .accounts
     var connectError: String?
     private var connectTask: Task<Void, Never>?
+    /// Shared by every window of this process: hands accounts and credentials to the windows they open.
+    private let handoff: WindowHandoff<WindowConnection>
+
+    init(handoff: WindowHandoff<WindowConnection>) {
+        self.handoff = handoff
+    }
 
     var workspace: WorkspaceModel? {
         if case let .connected(model) = phase { return model }
@@ -56,17 +68,15 @@ final class WindowSession {
     func connect(account: StorageAccount, store: AccountStore, overrideCredentials: SigningCredentials? = nil,
                  then: (@MainActor (WorkspaceModel) -> Void)? = nil) {
         connectError = nil
-        guard let credentials = overrideCredentials ?? store.repository.credentials(for: account) else {
-            connectError = "No secret access key is stored for “\(account.displayName)”. Edit the account and enter it."
-            return
-        }
+        guard let credentials = overrideCredentials ?? storedCredentials(for: account, store: store) else { return }
         phase = .connecting(name: account.displayName)
         connectTask = Task {
             do {
                 let opened = try await AccountOpener.open(account: account, credentials: credentials)
                 guard !Task.isCancelled else { return }
                 store.markConnected(account.id)
-                let workspace = WorkspaceModel(account: account, client: opened.client, storage: opened.storage, buckets: opened.buckets)
+                let workspace = WorkspaceModel(account: account, credentials: credentials, client: opened.client,
+                                               storage: opened.storage, buckets: opened.buckets)
                 self.phase = .connected(workspace)
                 then?(workspace)
             } catch {
@@ -77,13 +87,48 @@ final class WindowSession {
         }
     }
 
+    /// Connects a window opened by a request with the account and credentials handed to it, and returns `true`.
+    /// Only requests made by this process have them: for a window that macOS restores from an earlier run this returns
+    /// `false` and the window is treated like a new, empty one.
+    func connect(_ request: WindowRequest, store: AccountStore) -> Bool {
+        guard let connection = handoff.take(request) else { return false }
+        connect(account: connection.account, store: store, overrideCredentials: connection.credentials)
+        return true
+    }
+
+    /// A request for another window connected like this one, with the same account and credentials
+    /// (New Window with This Connection; works for unsaved accounts and secrets outside the Keychain).
+    func duplicateRequest() -> WindowRequest? {
+        guard let workspace else { return nil }
+        let connection = WindowConnection(account: workspace.account, credentials: workspace.credentials)
+        return handoff.request(for: workspace.account.id, payload: connection)
+    }
+
+    /// A request for a new window connected to a saved account, with its secrets read as Connect reads them
+    /// (Open in New Window). When they are missing, this window shows why and no window opens.
+    func windowRequest(for account: StorageAccount, store: AccountStore) -> WindowRequest? {
+        connectError = nil
+        guard let credentials = storedCredentials(for: account, store: store) else { return nil }
+        return handoff.request(for: account.id, payload: WindowConnection(account: account, credentials: credentials))
+    }
+
+    private func storedCredentials(for account: StorageAccount, store: AccountStore) -> SigningCredentials? {
+        if let credentials = store.repository.credentials(for: account) { return credentials }
+        connectError = "No secret access key is stored for “\(account.displayName)”. Edit the account and enter it."
+        return nil
+    }
+
     func cancelConnecting() {
         connectTask?.cancel()
         connectTask = nil
         phase = .accounts
     }
 
+    /// Ends this window's connection only. Also stops a connect in progress, so a window closed while connecting
+    /// never finishes opening a workspace that nobody shows.
     func disconnect() {
+        connectTask?.cancel()
+        connectTask = nil
         workspace?.shutdown()
         phase = .accounts
     }

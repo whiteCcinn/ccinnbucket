@@ -7,6 +7,7 @@ import SwiftUI
 struct AccountsView: View {
     @Bindable var session: WindowSession
     let store: AccountStore
+    @Environment(\.openWindow) private var openWindow
 
     @State private var selection: UUID?
     @State private var draft: AccountDraft?
@@ -19,6 +20,16 @@ struct AccountsView: View {
             sidebar.navigationSplitViewColumnWidth(min: 230, ideal: 270, max: 360)
         } detail: {
             detail
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    openWindow(id: RootView.windowGroupID)
+                } label: {
+                    Label("New Window", systemImage: "macwindow.badge.plus")
+                }
+                .help("Open another window with its own connection (⌘N)")
+            }
         }
         .onChange(of: selection) { _, newValue in
             if let account = store.account(id: newValue) { draft = AccountDraft(account: account, store: store) }
@@ -110,6 +121,9 @@ struct AccountsView: View {
                 .tag(account.id)
                 .contextMenu {
                     Button("Connect") { session.connect(account: account, store: store) }
+                    Button("Open in New Window") {
+                        if let request = session.windowRequest(for: account, store: store) { openWindow(id: RootView.windowGroupID, value: request) }
+                    }
                     Divider()
                     Button(account.isFavorite ? "Remove from Favorites" : "Add to Favorites") { store.toggleFavorite(account) }
                     Button("Duplicate") { if let copy = store.duplicate(account) { selection = copy.id } }
@@ -127,6 +141,14 @@ struct AccountsView: View {
                 .id(draft.accountID ?? draft.account.id)
         } else {
             WelcomeView(onNew: newAccount, onImport: { showingImport = true })
+                .overlay(alignment: .top) {
+                    // Connects not started from the editor (a window opened for an account, deep links) can fail too.
+                    if let error = session.connectError {
+                        ErrorBanner(message: error) { session.connectError = nil }
+                            .frame(maxWidth: 640)
+                            .padding(20)
+                    }
+                }
         }
     }
 

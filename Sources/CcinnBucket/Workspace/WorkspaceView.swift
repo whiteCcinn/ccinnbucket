@@ -5,6 +5,7 @@ import SwiftUI
 struct WorkspaceView: View {
     @Bindable var workspace: WorkspaceModel
     let session: WindowSession
+    @Environment(\.openWindow) private var openWindow
     @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
@@ -83,10 +84,24 @@ struct WorkspaceView: View {
             Button { if let bucket = browser?.bucket { workspace.settingsBucket = bucket } } label: { Label("Bucket Settings", systemImage: "gearshape") }
                 .disabled(browser == nil)
                 .help("Versioning, lifecycle, CORS, policy, ACL, encryption and incomplete uploads")
+            Menu {
+                Button("New Window with This Connection", action: openWindowWithThisConnection)
+                Button("New Window") { openWindow(id: RootView.windowGroupID) }
+            } label: {
+                Label("New Window", systemImage: "macwindow.badge.plus")
+            } primaryAction: {
+                openWindowWithThisConnection()
+            }
+            .help("Open this connection in another window (⌥⌘N); each window has its own connection")
             TransfersToolbarButton(model: workspace.transfers) { withAnimation(.snappy) { workspace.showTransfers.toggle() } }
             Button { workspace.showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
                 .help("Show or hide the inspector (⌥⌘I)")
         }
+    }
+
+    /// Another window connected to this account with the credentials in use (each window has its own connection).
+    private func openWindowWithThisConnection() {
+        if let request = session.duplicateRequest() { openWindow(id: RootView.windowGroupID, value: request) }
     }
 }
 

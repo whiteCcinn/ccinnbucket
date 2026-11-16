@@ -2,6 +2,7 @@ import CcinnBucketKit
 import Foundation
 import Observation
 import StorageKit
+import StorageSigning
 
 struct Toast: Equatable, Identifiable {
     let id = UUID()
@@ -14,6 +15,9 @@ struct Toast: Equatable, Identifiable {
 @Observable
 final class WorkspaceModel {
     let account: StorageAccount
+    /// The credentials this window connected with, kept in memory only so another window can reuse them
+    /// (New Window with This Connection) when they are not in the Keychain.
+    let credentials: SigningCredentials
     let client: ObjectStorageClient
     let storage: any ObjectStorage
     let transfers: TransfersModel
@@ -32,8 +36,9 @@ final class WorkspaceModel {
     private var toastTask: Task<Void, Never>?
     private var bucketsTask: Task<Void, Never>?
 
-    init(account: StorageAccount, client: ObjectStorageClient, storage: any ObjectStorage, buckets: [BucketInfo]) {
+    init(account: StorageAccount, credentials: SigningCredentials, client: ObjectStorageClient, storage: any ObjectStorage, buckets: [BucketInfo]) {
         self.account = account
+        self.credentials = credentials
         self.client = client
         self.storage = storage
         self.buckets = buckets.sorted { $0.name < $1.name }

@@ -102,6 +102,8 @@ final class AppServices {
     static let shared = AppServices()
 
     let accounts: AccountStore
+    /// Accounts and credentials on their way to windows opened by this process (in memory only).
+    let windowHandoff = WindowHandoff<WindowConnection>()
 
     private init() {
         // `--data-dir <path>` isolates accounts (and keeps secrets in memory) for demos and visual checks.

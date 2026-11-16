@@ -9,8 +9,9 @@ struct CcinnBucketApp: App {
     @AppStorage("appearance") private var appearance = AppearancePreference.system.rawValue
 
     var body: some Scene {
-        WindowGroup("CcinnBucket", id: "main") {
-            RootView()
+        // Every window has its own connection. A request opens a window that connects right away.
+        WindowGroup("CcinnBucket", id: RootView.windowGroupID, for: WindowRequest.self) { $request in
+            RootView(request: request)
                 .frame(minWidth: 1080, minHeight: 660)
                 .preferredColorScheme(LaunchArguments.appearanceOverride ?? AppearancePreference(rawValue: appearance)?.colorScheme)
                 .tint(Theme.accent)
@@ -33,6 +34,11 @@ struct CcinnBucketApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Restored windows would only reopen the account screen; start with one clean window.
+        UserDefaults.standard.register(defaults: ["NSQuitAlwaysKeepsWindows": false])
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         if SnapshotTool.isRequested, !LaunchArguments.has("--snapshot-visible") {
             // Visual checks run invisibly: no Dock icon, no focus stealing, transparent windows.
@@ -60,8 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// Per-window root: account manager, progress, or workspace.
 struct RootView: View {
-    @State private var session = WindowSession()
+    static let windowGroupID = "main"
+
+    /// Set when the window was opened for an account (Open in New Window, New Window with This Connection).
+    let request: WindowRequest?
+    @State private var session = WindowSession(handoff: AppServices.shared.windowHandoff)
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     private let store = AppServices.shared.accounts
 
     var body: some View {
@@ -84,7 +95,10 @@ struct RootView: View {
         .presentsSoftwareUpdates()
         .onDisappear { session.disconnect() }
         .task {
-            LaunchArguments.consume(into: session, store: store)
+            if let request, session.connect(request, store: store) { return }
+            // A window without a request, or one macOS restored (its request has no handoff): launch arguments apply to
+            // the first such window only; later ones start at the account screen.
+            guard LaunchArguments.consume(into: session, store: store, openWindow: { openWindow(id: Self.windowGroupID, value: $0) }) else { return }
             if let pane = LaunchArguments.value("--open-settings") {
                 SettingsDeepLink.pane = pane
                 try? await Task.sleep(nanoseconds: 800_000_000)
@@ -137,7 +151,7 @@ struct ConnectingView: View {
 ///                 [--settings versioning|lifecycle|cors|policy|acl|encryption|uploads] [--transfers] [--upload /path/file]
 ///                 [--preview] [--edit-metadata] [--confirm-delete] [--share] [--hide-inspector]
 ///     CcinnBucket --data-dir /tmp/demo --demo-accounts [--new-account minio|oss|…]
-///     … [--appearance light|dark] [--snapshot out.png --snapshot-delay 6 --quit-after-snapshot]
+///     … [--duplicate-window] [--appearance light|dark] [--snapshot out.png --snapshot-delay 6 --quit-after-snapshot [--snapshot-window title]]
 ///
 /// Secrets passed on the command line live only in memory and are never saved.
 @MainActor
@@ -162,8 +176,10 @@ enum LaunchArguments {
         }
     }
 
-    static func consume(into session: WindowSession, store: AccountStore) {
-        guard !consumed else { return }
+    /// Applies the launch arguments to the first window that asks; returns `false` for every later window.
+    /// - Parameter openWindow: opens another window for `--duplicate-window`.
+    static func consume(into session: WindowSession, store: AccountStore, openWindow: @escaping @MainActor (WindowRequest) -> Void) -> Bool {
+        guard !consumed else { return false }
         consumed = true
         if has("--demo-accounts") { seedDemoAccounts(store) }
 
@@ -181,10 +197,12 @@ enum LaunchArguments {
             account = ephemeral
             credentials = SigningCredentials(accessKeyID: ephemeral.accessKeyID, secretAccessKey: value("--secret-key") ?? "")
         }
-        guard let account else { return }
-        session.connect(account: account, store: store, overrideCredentials: credentials) { workspace in
+        guard let account else { return true }
+        session.connect(account: account, store: store, overrideCredentials: credentials) { [weak session] workspace in
+            if has("--duplicate-window"), let request = session?.duplicateRequest() { openWindow(request) }
             Task { @MainActor in await applyDeepLink(to: workspace) }
         }
+        return true
     }
 
     private static func applyDeepLink(to workspace: WorkspaceModel) async {
@@ -486,12 +504,21 @@ extension FocusedValues {
 
 struct AppCommands: Commands {
     @FocusedValue(\.windowSession) private var session
+    @Environment(\.openWindow) private var openWindow
 
     private var workspace: WorkspaceModel? { session?.workspace }
     private var browser: BrowserModel? { session?.workspace?.browser }
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            // File ▸ New Window (⌘N) comes from the window group and opens the account screen.
+            // ⇧⌘N is New Folder, so duplicating the connection uses ⌥⌘N.
+            Button("New Window with This Connection") {
+                if let request = session?.duplicateRequest() { openWindow(id: RootView.windowGroupID, value: request) }
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+            .disabled(workspace == nil)
+            Divider()
             Button("Disconnect") { session?.disconnect() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(workspace == nil)
