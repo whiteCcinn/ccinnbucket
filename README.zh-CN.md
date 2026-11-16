@@ -80,6 +80,14 @@ CcinnBucket 需要 **macOS 14 Sonoma 或更高版本**（Apple 芯片与 Intel �
 
 每个版本都附带 `SHA256SUMS.txt` 校验和。
 
+### 更新
+
+选择 **CcinnBucket → 检查更新…（Check for Updates…）**。如果有新版本，CcinnBucket 会显示更新内容。**下载并打开（Download & Open）** 会把磁盘映像保存到“下载”文件夹，按该版本的 `SHA256SUMS.txt` 校验后再打开。退出 CcinnBucket，然后把新版本拖到 **应用程序** 文件夹即可。
+
+CcinnBucket 每天也会在后台自动检查一次，可以在 **设置 → 通用 → 更新** 中关闭。检查只访问 GitHub 的公开 Releases API，也可以选择 **跳过此版本（Skip This Version）**。
+
+项目主页、发布说明和问题反馈入口也在 **帮助** 菜单和“关于”窗口中。
+
 ## 快速上手
 
 1. 点击 **New Account**，选择服务商（Amazon S3、MinIO、R2、Ceph、Wasabi、腾讯云 COS、其他 S3 兼容服务或阿里云 OSS），填写 Endpoint（如需要）、区域与 Access Key；也可以点击 **Import from CLI Config…** 导入。

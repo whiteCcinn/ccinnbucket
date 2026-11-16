@@ -80,6 +80,14 @@ CcinnBucket runs on **macOS 14 Sonoma or later** (Apple silicon and Intel).
 
 Each release lists SHA-256 checksums in `SHA256SUMS.txt`.
 
+### Updating
+
+Choose **CcinnBucket → Check for Updates…**. If a newer release exists, CcinnBucket shows what's new. **Download & Open** saves the disk image to your Downloads folder, checks it against the release's `SHA256SUMS.txt`, and opens it. Quit CcinnBucket, then drag the new version onto **Applications**.
+
+CcinnBucket also checks quietly once a day; turn this off in **Settings → General → Updates**. The check contacts only GitHub's public releases API, and you can **Skip This Version**.
+
+The project page, release notes and issue tracker are also in the **Help** menu and the About window.
+
 ## Quick start
 
 1. Click **New Account**, pick a provider (Amazon S3, MinIO, R2, Ceph, Wasabi, Tencent COS, other S3-compatible or Alibaba Cloud OSS), and enter the endpoint (if needed), region and access key. Or click **Import from CLI Config…**.
