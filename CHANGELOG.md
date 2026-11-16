@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-17
+
 ### Added
 
 - **Multiple windows, each with its own connection.**
@@ -46,6 +48,7 @@ First public release.
 - **MCP server for AI clients.** `CcinnBucket.app/Contents/MacOS/CcinnBucket mcp [--profile <name|id>] [--read-only]` runs a headless Model Context Protocol server over stdio with the tools `list_connections`, `list_buckets`, `list_objects`, `head_object`, `read_object_text` and `object_versions`, plus `put_text_object`, `delete_objects`, `copy_object` and `presign_url` for accounts with read & write access.
 - Per-account **AI access via MCP** (Disabled / Read-only / Read & write, disabled by default) in the account editor and in **Settings → MCP**, with copy-ready setup for Claude Code, Codex and Claude Desktop; app-enforced limits and an audit log in `mcp-audit.jsonl`.
 
-[Unreleased]: https://github.com/whiteCcinn/ccinnbucket/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/whiteCcinn/ccinnbucket/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/whiteCcinn/ccinnbucket/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/whiteCcinn/ccinnbucket/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/whiteCcinn/ccinnbucket/releases/tag/v1.0.0
