@@ -32,7 +32,7 @@ private struct SelectionSummary: View {
     @State private var calculating = false
 
     var body: some View {
-        ScrollView {
+        InspectorScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     Image(systemName: rows.count == 1 && rows[0].isFolder ? "folder.fill" : "square.stack.3d.up.fill")
@@ -89,7 +89,7 @@ private struct ObjectInspector: View {
     let browser: BrowserModel
 
     var body: some View {
-        ScrollView {
+        InspectorScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 header
                 previewCard
@@ -130,21 +130,24 @@ private struct ObjectInspector: View {
 
     private var previewCard: some View {
         VStack(spacing: 0) {
-            PreviewContentView(content: model.preview)
+            PreviewContentView(content: model.preview, style: .inspector)
                 .frame(height: 200)
                 .frame(maxWidth: .infinity)
                 .clipped()
             Divider()
-            HStack {
-                Button { browser.sheet = .preview(model.row) } label: { Label("Open Preview", systemImage: "eye") }
-                    .buttonStyle(.borderless)
-                Spacer()
+            // Standard small buttons: a full-size hit area (borderless caption buttons were only 13 pt tall).
+            HStack(spacing: 6) {
+                Button { browser.sheet = .preview(model.row) } label: { Label("Preview", systemImage: "eye") }
+                    .help("Open the preview window (Space): more content, copy, and editing for text")
+                Spacer(minLength: 0)
                 Button { browser.sheet = .presign(model.row) } label: { Label("Share", systemImage: "link") }
-                    .buttonStyle(.borderless)
+                    .help("Create a presigned link")
                 Button { browser.chooseDownloadDestination(for: [model.row]) } label: { Label("Download", systemImage: "arrow.down.circle") }
-                    .buttonStyle(.borderless)
+                    .help("Download this object")
             }
-            .font(.caption)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .labelStyle(.titleAndIcon)
             .padding(8)
         }
         .background(.background, in: RoundedRectangle(cornerRadius: Theme.Metrics.cornerRadius))
@@ -294,5 +297,26 @@ private struct MetadataEditor: View {
                 .buttonStyle(.borderless)
                 .font(.caption)
         }
+    }
+}
+
+/// The inspector's scrolling container.
+///
+/// Not a SwiftUI `ScrollView`: in the inspector column (which extends under the toolbar) its content gets the toolbar
+/// inset twice on the AppKit side, so every AppKit-backed control inside (all buttons, text fields) sits ~52 pt below
+/// where it is drawn — clicks on a visible button reach nothing and the buttons appear dead. A `List` is backed by an
+/// `NSTableView` whose rows host their content in their own views, so drawing and hit-testing agree.
+struct InspectorScrollView<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        List {
+            content
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
     }
 }

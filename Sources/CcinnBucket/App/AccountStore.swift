@@ -82,6 +82,37 @@ final class AccountStore {
         try? persist()
     }
 
+    /// Applies an import: new connections are added, same-id connections take the imported settings (sensitive updates —
+    /// redirecting a connection or widening its access — only when `applyingSensitiveUpdates`). Secrets from the file go
+    /// to the Keychain; an updated connection without one in the file keeps its current secret. All Keychain writes
+    /// happen before the account list changes, so a failure leaves the saved connections as they were.
+    /// - Returns: the added and updated accounts.
+    func importConnections(_ plan: ConnectionTransfer.ImportPlan, secrets: [UUID: ConnectionTransfer.Secrets],
+                           applyingSensitiveUpdates: Bool) throws -> [StorageAccount] {
+        var next = accounts
+        var imported: [StorageAccount] = []
+        var secretWrites: [(StorageAccount, ConnectionTransfer.Secrets)] = []
+        for account in plan.added where !next.contains(where: { $0.id == account.id }) {
+            next.append(account)
+            imported.append(account)
+            secretWrites.append((account, secrets[account.id] ?? .init(secretAccessKey: nil, sessionToken: nil)))
+        }
+        for update in plan.updated where applyingSensitiveUpdates || !update.isSensitive {
+            guard let index = next.firstIndex(where: { $0.id == update.account.id }) else { continue }
+            var account = update.account
+            account.lastConnectedAt = [next[index].lastConnectedAt, account.lastConnectedAt].compactMap { $0 }.max()
+            next[index] = account
+            imported.append(account)
+            if let secret = secrets[account.id] { secretWrites.append((account, secret)) }
+        }
+        for (account, secret) in secretWrites {
+            try repository.storeSecrets(for: account, secretAccessKey: secret.secretAccessKey, sessionToken: secret.sessionToken)
+        }
+        accounts = next
+        try persist()
+        return imported
+    }
+
     func secretAccessKey(for account: StorageAccount) -> String? { repository.secretAccessKey(for: account) }
     func sessionToken(for account: StorageAccount) -> String? { repository.sessionToken(for: account) }
 

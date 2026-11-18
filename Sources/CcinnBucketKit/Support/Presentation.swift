@@ -1,3 +1,4 @@
+import Decompression
 import Foundation
 import StorageKit
 import UniformTypeIdentifiers
@@ -36,6 +37,8 @@ public struct PreviewPlan: Hashable, Sendable {
         case quickLook
         case empty
         case tooLarge
+        /// gzip or Zstandard: streamed and decompressed from the start, any size (`compression` says which).
+        case compressed
     }
 
     public static let textLimit: Int64 = 1 << 20
@@ -47,6 +50,18 @@ public struct PreviewPlan: Hashable, Sendable {
     /// Bytes to fetch (nil = whole object).
     public var range: ByteRange?
     public var isTruncated: Bool
+    /// The compression of a `.compressed` object.
+    public var compression: CompressionFormat?
+    /// The (decompressed) content is JSON: shown indented.
+    public var isJSON = false
+
+    init(kind: Kind, range: ByteRange?, isTruncated: Bool, compression: CompressionFormat? = nil, isJSON: Bool = false) {
+        self.kind = kind
+        self.range = range
+        self.isTruncated = isTruncated
+        self.compression = compression
+        self.isJSON = isJSON
+    }
 
     static let textExtensions: Set<String> = [
         "txt", "log", "md", "markdown", "csv", "tsv", "yaml", "yml", "xml", "html", "htm", "css", "js", "mjs", "ts", "tsx", "jsx",
@@ -65,10 +80,17 @@ public struct PreviewPlan: Hashable, Sendable {
         let isImage = type.hasPrefix("image/") || imageExtensions.contains(ext)
         let isPDF = type == "application/pdf" || ext == "pdf"
 
-        if isJSON, size <= jsonLimit { return PreviewPlan(kind: .json, range: nil, isTruncated: false) }
+        if !isImage, !isPDF, let compression = CompressionFormat.fromExtension(ext) {
+            // `bids.json.gz` → JSON inside gzip; `app.log.zst` → text inside Zstandard.
+            let innerExtension = ObjectPath.fileExtension(of: String(key.dropLast(ext.count + 1))) ?? ""
+            return PreviewPlan(kind: .compressed, range: nil, isTruncated: false, compression: compression,
+                               isJSON: innerExtension == "json")
+        }
+        if isJSON, size <= jsonLimit { return PreviewPlan(kind: .json, range: nil, isTruncated: false, isJSON: true) }
         if isJSON || isText {
             let truncated = size > textLimit
-            return PreviewPlan(kind: .text, range: truncated ? ByteRange(first: 0, last: textLimit - 1) : nil, isTruncated: truncated)
+            return PreviewPlan(kind: .text, range: truncated ? ByteRange(first: 0, last: textLimit - 1) : nil, isTruncated: truncated,
+                               isJSON: isJSON)
         }
         if isImage { return PreviewPlan(kind: size <= imageLimit ? .image : .tooLarge, range: nil, isTruncated: false) }
         if isPDF { return PreviewPlan(kind: size <= documentLimit ? .pdf : .tooLarge, range: nil, isTruncated: false) }

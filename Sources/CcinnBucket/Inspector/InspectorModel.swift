@@ -55,84 +55,6 @@ struct MetadataDraft: Equatable {
     }
 }
 
-enum PreviewContent {
-    case idle
-    case loading
-    case text(String, truncated: Bool, totalSize: Int64)
-    case image(NSImage)
-    case pdf(PDFDocument)
-    case file(URL)
-    case unavailable(String)
-}
-
-/// Loads previews according to `PreviewPlan` (ranged GETs, size limits, QuickLook files in a temp folder).
-enum PreviewLoader {
-    static let directory = FileManager.default.temporaryDirectory.appendingPathComponent("CcinnBucket-Previews", isDirectory: true)
-
-    static func cleanUp() { try? FileManager.default.removeItem(at: directory) }
-
-    static func load(bucket: String, key: String, versionID: String?, contentType: String?, size: Int64,
-                     storage: any ObjectStorage) async -> PreviewContent {
-        let plan = PreviewPlan.make(key: key, contentType: contentType, size: size)
-        do {
-            switch plan.kind {
-            case .empty:
-                return .unavailable(key.hasSuffix("/") ? "Folder marker" : "Empty object")
-            case .tooLarge:
-                return .unavailable("Too large to preview (\(SizeFormat.bytes(size))). Download it instead.")
-            case .text:
-                let limit = Int(min(size, PreviewPlan.textLimit))
-                let data = try await storage.getObject(bucket: bucket, key: key, versionID: versionID, range: plan.range, maxBytes: max(1, limit) + 1)
-                let text = await Task.detached { Self.decodeText(data.data) }.value
-                return .text(text, truncated: plan.isTruncated, totalSize: size)
-            case .json:
-                let data = try await storage.getObject(bucket: bucket, key: key, versionID: versionID, range: nil, maxBytes: Int(PreviewPlan.jsonLimit) + 1)
-                let text = await Task.detached { Self.prettyJSON(data.data) ?? Self.decodeText(data.data) }.value
-                return .text(text, truncated: false, totalSize: size)
-            case .image:
-                let data = try await storage.getObject(bucket: bucket, key: key, versionID: versionID, range: nil, maxBytes: Int(PreviewPlan.imageLimit) + 1)
-                if let image = NSImage(data: data.data) { return .image(image) }
-                return try await quickLookFile(bucket: bucket, key: key, versionID: versionID, storage: storage)
-            case .pdf:
-                let data = try await storage.getObject(bucket: bucket, key: key, versionID: versionID, range: nil, maxBytes: Int(PreviewPlan.documentLimit) + 1)
-                if let document = PDFDocument(data: data.data) { return .pdf(document) }
-                return .unavailable("The PDF could not be opened.")
-            case .quickLook:
-                return try await quickLookFile(bucket: bucket, key: key, versionID: versionID, storage: storage)
-            }
-        } catch {
-            let wrapped = StorageError.wrap(error)
-            return wrapped.isCancellation ? .idle : .unavailable(wrapped.description)
-        }
-    }
-
-    private static func quickLookFile(bucket: String, key: String, versionID: String?, storage: any ObjectStorage) async throws -> PreviewContent {
-        let folder = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        guard let destination = LocalPathMapper.localURL(forKey: ObjectPath.lastComponent(of: key), relativeTo: "", root: folder) else {
-            return .unavailable("This object cannot be previewed.")
-        }
-        try await ObjectDownloader(storage: storage, limiter: AsyncLimiter(limit: 4)).download(bucket: bucket, key: key, versionID: versionID,
-                                                                                              to: destination, progress: { _ in })
-        return .file(destination)
-    }
-
-    nonisolated static func decodeText(_ data: Data) -> String {
-        if let text = String(data: data, encoding: .utf8) { return text }
-        // A range may end inside a multi-byte character: drop up to 3 trailing bytes before falling back.
-        for trim in 1...3 where data.count > trim {
-            if let text = String(data: data.dropLast(trim), encoding: .utf8) { return text }
-        }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    nonisolated static func prettyJSON(_ data: Data) -> String? {
-        guard let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
-              let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed])
-        else { return nil }
-        return String(decoding: pretty, as: UTF8.self)
-    }
-}
-
 /// Details, preview and metadata editing for one selected object.
 @MainActor
 @Observable
@@ -196,14 +118,19 @@ final class InspectorModel {
 
     func loadPreview() {
         previewTask?.cancel()
-        preview = .loading
+        preview = .loading(nil)
         let size = metadata?.size ?? row.size
         let contentType = metadata?.contentType
+        let (bucket, key, versionID, storage) = (bucket, row.key, versionID, storage)
         previewTask = Task { [weak self] in
-            guard let self else { return }
-            let content = await PreviewLoader.load(bucket: bucket, key: row.key, versionID: versionID, contentType: contentType, size: size,
-                                                   storage: storage)
-            if !Task.isCancelled { self.preview = content }
+            let loaded = await PreviewLoader.load(bucket: bucket, key: key, versionID: versionID, contentType: contentType, size: size,
+                                                  storage: storage, budget: .inspector) { [weak self] progress in
+                // Progress may arrive after the result; never let it replace the content.
+                guard let self, case .loading = self.preview else { return }
+                self.preview = .loading(progress)
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.preview = loaded.content
         }
     }
 

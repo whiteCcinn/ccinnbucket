@@ -101,7 +101,23 @@ struct AccountsView: View {
                 Button {
                     showingImport = true
                 } label: {
-                    Label("Import from CLI Config…", systemImage: "square.and.arrow.down").frame(maxWidth: .infinity)
+                    Label("Import from CLI Config…", systemImage: "terminal").frame(maxWidth: .infinity)
+                }
+                .controlSize(.regular)
+                HStack(spacing: 8) {
+                    Button {
+                        session.connectionTransfer = .export
+                    } label: {
+                        Label("Export…", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity)
+                    }
+                    .disabled(store.accounts.isEmpty)
+                    .help("Export all connections to one file, to import on another Mac")
+                    Button {
+                        if let request = ConnectionTransferRequest.chooseImportFile() { session.connectionTransfer = request }
+                    } label: {
+                        Label("Import…", systemImage: "square.and.arrow.down").frame(maxWidth: .infinity)
+                    }
+                    .help("Import connections exported from another Mac")
                 }
                 .controlSize(.regular)
             }
@@ -140,7 +156,9 @@ struct AccountsView: View {
             AccountEditorView(draft: draft, store: store, session: session) { saved in selection = saved.id }
                 .id(draft.accountID ?? draft.account.id)
         } else {
-            WelcomeView(onNew: newAccount, onImport: { showingImport = true })
+            WelcomeView(onNew: newAccount, onImport: { showingImport = true }, onImportConnections: {
+                if let request = ConnectionTransferRequest.chooseImportFile() { session.connectionTransfer = request }
+            })
                 .overlay(alignment: .top) {
                     // Connects not started from the editor (a window opened for an account, deep links) can fail too.
                     if let error = session.connectError {
@@ -195,6 +213,7 @@ private struct AccountRow: View {
 private struct WelcomeView: View {
     let onNew: () -> Void
     let onImport: () -> Void
+    let onImportConnections: () -> Void
 
     var body: some View {
         VStack(spacing: 24) {
@@ -208,6 +227,9 @@ private struct WelcomeView: View {
                 Button("New Account…", action: onNew)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
+                Button("Import Connections…", action: onImportConnections)
+                    .controlSize(.large)
+                    .help("Moving from another Mac? Import the file from File ▸ Export Connections… there")
                 Button("Import from CLI Config…", action: onImport)
                     .controlSize(.large)
             }

@@ -38,13 +38,15 @@ private struct SheetScaffold<Content: View, Buttons: View>: View {
 
 struct NewFolderSheet: View {
     let model: BrowserModel
+    /// The folder the new folder goes into.
+    let parent: String
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var problem: String?
     @State private var working = false
 
     var body: some View {
-        SheetScaffold(title: "New Folder", subtitle: "in \(model.bucket)/\(model.prefix)", systemImage: "folder.badge.plus") {
+        SheetScaffold(title: "New Folder", subtitle: "in \(model.bucket)/\(parent)", systemImage: "folder.badge.plus") {
             TextField("Folder name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(create)
@@ -62,7 +64,7 @@ struct NewFolderSheet: View {
     private func create() {
         working = true
         Task {
-            problem = await model.createFolder(named: name)
+            problem = await model.createFolder(named: name, in: parent)
             working = false
             if problem == nil { dismiss() }
         }
@@ -225,113 +227,5 @@ struct PresignSheet: View {
                 problem = describe(error)
             }
         }
-    }
-}
-
-/// Large preview (Space / double-click).
-struct PreviewSheet: View {
-    let row: ListingRow
-    let bucket: String
-    let storage: any ObjectStorage
-    @Environment(\.dismiss) private var dismiss
-    @State private var content: PreviewContent = .loading
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: Theme.symbol(forKey: row.key, isFolder: false))
-                    .foregroundStyle(Color(nsColor: Theme.nsColor(forKey: row.key, isFolder: false)))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(row.name).font(.headline).lineLimit(1)
-                    Text("\(SizeFormat.bytes(row.size)) · \(row.key)").font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                }
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
-            }
-            .padding(14)
-            Divider()
-            PreviewContentView(content: content, large: true)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(minWidth: 760, idealWidth: 900, minHeight: 520, idealHeight: 640)
-        .task {
-            content = await PreviewLoader.load(bucket: bucket, key: row.key, versionID: row.version?.versionID, contentType: nil, size: row.size,
-                                               storage: storage)
-        }
-    }
-}
-
-/// Renders any `PreviewContent`.
-struct PreviewContentView: View {
-    let content: PreviewContent
-    var large = false
-
-    var body: some View {
-        switch content {
-        case .idle:
-            Color.clear
-        case .loading:
-            ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
-        case let .text(text, truncated, totalSize):
-            VStack(spacing: 0) {
-                if truncated {
-                    NoticeBanner(message: "Showing the first \(SizeFormat.bytes(PreviewPlan.textLimit)) of \(SizeFormat.bytes(totalSize)).",
-                                 systemImage: "scissors")
-                        .padding(8)
-                }
-                ScrollView([.vertical, .horizontal]) {
-                    Text(text.count > 400_000 ? String(text.prefix(400_000)) : text)
-                        .font(large ? Theme.monospaced : Theme.monospacedSmall)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(10)
-                }
-            }
-        case let .image(image):
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(large ? 16 : 4)
-        case let .pdf(document):
-            PDFKitView(document: document)
-        case let .file(url):
-            QuickLookView(url: url)
-        case let .unavailable(message):
-            ContentUnavailableView("No Preview", systemImage: "eye.slash", description: Text(message))
-        }
-    }
-}
-
-struct PDFKitView: NSViewRepresentable {
-    let document: PDFDocument
-
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.document = document
-        return view
-    }
-
-    func updateNSView(_ nsView: PDFView, context: Context) {
-        if nsView.document !== document { nsView.document = document }
-    }
-}
-
-struct QuickLookView: NSViewRepresentable {
-    let url: URL
-
-    func makeNSView(context: Context) -> NSView {
-        guard let view = QLPreviewView(frame: .zero, style: .normal) else { return NSView() }
-        view.autostarts = true
-        view.previewItem = url as NSURL
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        guard let view = nsView as? QLPreviewView, (view.previewItem as? NSURL) as URL? != url else { return }
-        view.previewItem = url as NSURL
     }
 }

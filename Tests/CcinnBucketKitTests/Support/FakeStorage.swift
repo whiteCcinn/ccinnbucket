@@ -8,6 +8,12 @@ final class FakeStorage: ObjectStorage {
         var data: Data
         var contentType: String?
         var lastModified: Date
+        /// Changes with every write, so tests can detect replaced objects.
+        var generation = 0
+        var options = ObjectWriteOptions()
+        var tags: [ObjectTag] = []
+
+        var eTag: String { generation == 0 ? "\"e\"" : "\"e\(generation)\"" }
     }
 
     struct State: Sendable {
@@ -19,7 +25,11 @@ final class FakeStorage: ObjectStorage {
     /// Called at the start of every listing; may sleep to simulate a slow server.
     let listHook: @Sendable () async throws -> Void
 
-    init(listHook: @escaping @Sendable () async throws -> Void = {}) {
+    /// AWS S3's HeadObject does not report `x-amz-tagging-count`; MinIO and GetObject do.
+    let headReportsTagCount: Bool
+
+    init(headReportsTagCount: Bool = true, listHook: @escaping @Sendable () async throws -> Void = {}) {
+        self.headReportsTagCount = headReportsTagCount
         self.listHook = listHook
     }
 
@@ -28,8 +38,19 @@ final class FakeStorage: ObjectStorage {
     }
 
     func put(_ bucket: String, _ key: String, _ data: Data, contentType: String?) {
-        state.withLock { $0.buckets[bucket, default: [:]][key] = Object(data: data, contentType: contentType, lastModified: Date(timeIntervalSince1970: 1_700_000_000)) }
+        put(bucket, key, data, options: ObjectWriteOptions(contentType: contentType))
     }
+
+    func put(_ bucket: String, _ key: String, _ data: Data, options: ObjectWriteOptions) {
+        state.withLock { state in
+            let generation = state.buckets[bucket]?[key].map { $0.generation + 1 } ?? 0
+            state.buckets[bucket, default: [:]][key] = Object(data: data, contentType: options.contentType,
+                                                              lastModified: Date(timeIntervalSince1970: 1_700_000_000),
+                                                              generation: generation, options: options, tags: options.tags)
+        }
+    }
+
+    func stored(_ bucket: String, _ key: String) -> Object? { state.withLock { $0.buckets[bucket]?[key] } }
 
     var calls: [String] { state.withLock { $0.calls } }
 
@@ -80,7 +101,7 @@ final class FakeStorage: ObjectStorage {
         let next = start + page.count
         let objects = try page.map { key -> ObjectEntry in
             let stored = try object(request.bucket, key)
-            return ObjectEntry(key: key, size: Int64(stored.data.count), lastModified: stored.lastModified, eTag: "\"e\"", storageClass: "STANDARD")
+            return ObjectEntry(key: key, size: Int64(stored.data.count), lastModified: stored.lastModified, eTag: stored.eTag, storageClass: "STANDARD")
         }
         return ListPage(objects: objects, commonPrefixes: start == 0 ? prefixes : [], isTruncated: next < keys.count,
                         nextToken: next < keys.count ? .continuation(String(next)) : nil, apiVersion: .v2)
@@ -100,8 +121,13 @@ final class FakeStorage: ObjectStorage {
     func headObject(bucket: String, key: String, versionID: String?) async throws -> ObjectMetadata {
         record("headObject")
         let stored = try object(bucket, key)
-        return ObjectMetadata(key: key, size: Int64(stored.data.count), eTag: "\"e\"", lastModified: stored.lastModified, contentType: stored.contentType,
-                              userMetadata: ["owner": "test"])
+        var metadata = ObjectMetadata(key: key, size: Int64(stored.data.count), eTag: stored.eTag, lastModified: stored.lastModified,
+                                      contentType: stored.contentType, userMetadata: stored.options.userMetadata.isEmpty ? ["owner": "test"] : stored.options.userMetadata)
+        metadata.cacheControl = stored.options.cacheControl
+        metadata.contentEncoding = stored.options.contentEncoding
+        metadata.storageClass = stored.options.storageClass
+        metadata.tagCount = stored.tags.isEmpty || !headReportsTagCount ? nil : stored.tags.count
+        return metadata
     }
 
     func getObject(bucket: String, key: String, versionID: String?, range: ByteRange?, maxBytes: Int) async throws -> ObjectData {
@@ -124,7 +150,7 @@ final class FakeStorage: ObjectStorage {
 
     func putObject(bucket: String, key: String, body: Data, options: ObjectWriteOptions, progress: TransferProgressHandler?) async throws -> PutResult {
         record("putObject")
-        put(bucket, key, body, contentType: options.contentType)
+        put(bucket, key, body, options: options)
         return PutResult(eTag: "\"new\"", versionID: nil)
     }
 
@@ -146,7 +172,10 @@ final class FakeStorage: ObjectStorage {
         return PutResult(eTag: "\"copy\"")
     }
 
-    func getObjectTags(bucket: String, key: String, versionID: String?) async throws -> [ObjectTag] { [] }
+    func getObjectTags(bucket: String, key: String, versionID: String?) async throws -> [ObjectTag] {
+        record("getObjectTags")
+        return try object(bucket, key).tags
+    }
     func putObjectTags(bucket: String, key: String, versionID: String?, tags: [ObjectTag]) async throws { record("putObjectTags") }
     func createMultipartUpload(bucket: String, key: String, options: ObjectWriteOptions) async throws -> String { "u" }
     func uploadPart(bucket: String, key: String, uploadID: String, partNumber: Int, body: Data, progress: TransferProgressHandler?) async throws -> UploadedPart {

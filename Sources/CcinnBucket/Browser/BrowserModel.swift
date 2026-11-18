@@ -16,7 +16,8 @@ final class BrowserModel {
     }
 
     enum Sheet: Identifiable {
-        case newFolder
+        /// A new folder inside `parent` (the current folder, or a column's folder in column view).
+        case newFolder(parent: String)
         case rename(ListingRow)
         case transfer(rows: [ListingRow], move: Bool)
         case presign(ListingRow)
@@ -24,7 +25,7 @@ final class BrowserModel {
 
         var id: String {
             switch self {
-            case .newFolder: "new-folder"
+            case let .newFolder(parent): "new-folder-" + parent
             case let .rename(row): "rename-" + row.id
             case let .transfer(rows, move): (move ? "move-" : "copy-") + rows.map(\.id).joined(separator: "|")
             case let .presign(row): "presign-" + row.id
@@ -46,6 +47,16 @@ final class BrowserModel {
         var entries: [UploadEntry]
         var existing: Set<String>
     }
+
+    /// A request for the table of the column `prefix` to take keyboard focus (a new nonce each time).
+    struct ColumnFocus: Equatable {
+        var prefix: String
+        var nonce: Int
+    }
+
+    /// Navigation that comes from selecting in a column waits this long before listing, so holding ↓ through
+    /// folders sends one request for the folder the user stops on instead of one per folder.
+    static let columnListingDelay: UInt64 = 150_000_000
 
     let bucket: String
     let storage: any ObjectStorage
@@ -75,6 +86,13 @@ final class BrowserModel {
     var pendingUploadConflict: UploadConflict?
     /// Progress text while counting objects for an operation (cancellable).
     private(set) var busyMessage: String?
+    /// List or columns, as chosen by the user (`effectiveViewStyle` is what is shown).
+    private(set) var viewStyle: BrowserViewStyle
+    /// The folders above the current one, in column view.
+    let columns = FolderColumns()
+    private(set) var columnFocus = ColumnFocus(prefix: "", nonce: 0)
+    /// The sort order changed and `rows` are not re-sorted yet.
+    private var isSorting = false
 
     private var loadTask: Task<Void, Never>?
     private var sortTask: Task<Void, Never>?
@@ -95,6 +113,7 @@ final class BrowserModel {
         self.workspace = workspace
         history = NavigationHistory(start: BrowserLocation(bucket: bucket, prefix: prefix))
         accumulator = ListingAccumulator(prefix: prefix)
+        viewStyle = BrowserViewStyle.stored(in: .standard)
     }
 
     var prefix: String { history.current.prefix }
@@ -103,27 +122,44 @@ final class BrowserModel {
     var canGoBack: Bool { history.canGoBack }
     var canGoForward: Bool { history.canGoForward }
     var canGoUp: Bool { ObjectPath.parent(of: prefix) != nil }
-    var selectedRows: [ListingRow] { rows.filter { selection.contains($0.id) } }
+    var selectedRows: [ListingRow] { selection.isEmpty ? [] : rows.filter { selection.contains($0.id) } }
     var folderCount: Int { mode == .objects ? accumulator.folderCount : versionFolders.count }
     var objectCount: Int { mode == .objects ? accumulator.objectCount : versionItems.count }
     var loadedBytes: Int64 { mode == .objects ? accumulator.totalBytes : versionItems.reduce(0) { $0 &+ $1.size } }
 
+    /// What is shown: versions always use the list.
+    var effectiveViewStyle: BrowserViewStyle { mode == .versions ? .list : viewStyle }
+    var isColumnView: Bool { effectiveViewStyle == .columns }
+    /// The folders shown as columns, root first; the last one is the current folder.
+    var columnPrefixes: [String] { isColumnView ? ObjectPath.columnPrefixes(of: prefix) : [prefix] }
+
+    /// What the toolbar and the Object menu act on: the selection; in column view with nothing selected, the current
+    /// folder, which is the row highlighted in its parent column (as in Finder).
+    var actionRows: [ListingRow] {
+        let selected = selectedRows
+        guard selected.isEmpty, isColumnView, let parent = ObjectPath.parent(of: prefix) else { return selected }
+        return [ListingRow.folder(prefix, prefix: parent)]
+    }
+
+    func setViewStyle(_ style: BrowserViewStyle, remember: Bool = true) {
+        if remember { style.store(in: .standard) }
+        guard style != viewStyle else { return }
+        viewStyle = style
+        syncColumns(handed: nil)
+    }
+
     // MARK: Navigation
 
     func navigate(to prefix: String) {
-        guard prefix != self.prefix else { return }
-        history.visit(BrowserLocation(bucket: bucket, prefix: prefix))
-        locationChanged()
+        visit(prefix)
     }
 
     func goBack() {
-        guard history.goBack() != nil else { return }
-        locationChanged()
+        changeLocation { $0.goBack() != nil }
     }
 
     func goForward() {
-        guard history.goForward() != nil else { return }
-        locationChanged()
+        changeLocation { $0.goForward() != nil }
     }
 
     func goUp() {
@@ -131,13 +167,92 @@ final class BrowserModel {
         navigate(to: parent)
     }
 
-    private func locationChanged() {
+    private func visit(_ folder: String, listingDelay: UInt64 = 0) {
+        guard folder != prefix else { return }
+        let location = BrowserLocation(bucket: bucket, prefix: folder)
+        changeLocation(listingDelay: listingDelay) { history in
+            history.visit(location)
+            return true
+        }
+    }
+
+    /// Moves in the history, hands the old listing to its column (column view) and lists the new folder, or adopts
+    /// its column's listing when it already has one.
+    private func changeLocation(listingDelay: UInt64 = 0, _ move: (inout NavigationHistory) -> Bool) {
+        let previous = prefix
+        let handed = isColumnView ? columnState() : nil
+        guard move(&history), prefix != previous else { return }
         if !filterText.isEmpty {
-            filterTask?.cancel()
             filterText = ""
+            filterTask?.cancel() // after the assignment, which scheduled a reload
         }
         selection = []
-        reload()
+        let seed = syncColumns(handed: handed)
+        reloadListing(seed: seed, delay: seed == nil ? listingDelay : 0)
+    }
+
+    // MARK: Column view
+
+    /// The current folder's listing as a column, when it is complete enough to reuse (objects, unfiltered, settled).
+    private func columnState() -> FolderColumnState? {
+        // No page in flight and rows in step with the accumulator: a merge still running in the background would
+        // otherwise leave the handed-over column without that page for good.
+        guard mode == .objects, filterText.isEmpty, !isLoading, !isLoadingMore, !isLoadingAll, !isSorting, error == nil, pendingRows.isEmpty,
+              rows.count == accumulator.folderCount + accumulator.objectCount else { return nil }
+        return FolderColumnState(accumulator: accumulator, sortedRows: rows, sortColumn: sortColumn, ascending: sortAscending)
+    }
+
+    /// Updates the ancestor columns for the current folder (or drops them outside column view).
+    @discardableResult
+    private func syncColumns(handed: FolderColumnState?) -> FolderColumnState? {
+        guard isColumnView else {
+            columns.removeAll()
+            return nil
+        }
+        return columns.sync(current: prefix, handed: handed, bucket: bucket, storage: storage, sortColumn: sortColumn, ascending: sortAscending)
+    }
+
+    /// Selection in the column for `column` (clicks and ↑/↓): one folder opens it, anything else selects in that folder.
+    func selectInColumn(_ column: String, ids: Set<String>) {
+        guard isColumnView else {
+            if selection != ids { selection = ids }
+            return
+        }
+        let selected: [ListingRow]
+        if column == prefix {
+            selected = ids.isEmpty ? [] : rows.filter { ids.contains($0.id) }
+        } else if let listing = columns.listing(for: column) {
+            selected = listing.state.rows(withIDs: ids)
+        } else {
+            return
+        }
+        // Ids the column cannot resolve (its listing was replaced meanwhile) must not be read as "nothing selected",
+        // which would navigate back to the column's folder.
+        guard selected.count == ids.count else { return }
+        let outcome = ColumnSelection.resolve(column: column, selected: selected)
+        visit(outcome.folder, listingDelay: Self.columnListingDelay)
+        if selection != outcome.selection { selection = outcome.selection }
+    }
+
+    /// ← and → between columns.
+    func moveColumnFocus(_ move: ColumnMove, from column: String) {
+        guard isColumnView,
+              let plan = ColumnNavigator.plan(move, from: column, current: prefix, currentHasSelection: !selection.isEmpty) else { return }
+        visit(plan.folder)
+        switch plan.selection {
+        case .keep:
+            break
+        case .clear:
+            if !selection.isEmpty { selection = [] }
+        case .selectFirst:
+            if let first = rows.first { selectInColumn(prefix, ids: [first.id]) }
+        }
+        columnFocus = ColumnFocus(prefix: plan.focus, nonce: columnFocus.nonce &+ 1)
+    }
+
+    /// The focus request for the table of the column `column` (0 when it has none).
+    func focusRequest(for column: String) -> Int {
+        columnFocus.prefix == column ? columnFocus.nonce : 0
     }
 
     /// Opens a folder, or previews an object.
@@ -153,7 +268,8 @@ final class BrowserModel {
         guard newMode != mode else { return }
         mode = newMode
         selection = []
-        reload()
+        syncColumns(handed: nil)
+        reloadListing()
     }
 
     // MARK: Listing
@@ -165,26 +281,52 @@ final class BrowserModel {
         busyTask?.cancel()
         refreshTask?.cancel()
         inspector?.cancel()
+        columns.removeAll()
     }
 
+    /// Lists the current folder again, and every other column in column view (Refresh, finished transfers, …).
     func reload() {
+        if isColumnView { columns.refreshAll() }
+        syncColumns(handed: nil)
+        reloadListing()
+    }
+
+    /// Lists the current folder from the first page, or adopts `seed` (a loaded column of this folder) without a request.
+    /// - Parameter delay: nanoseconds to wait before the first request (cancelled by a newer listing).
+    private func reloadListing(seed: FolderColumnState? = nil, delay: UInt64 = 0) {
         loadTask?.cancel()
         sortTask?.cancel()
+        isSorting = false
         generation += 1
         let current = generation
-        accumulator = ListingAccumulator(prefix: prefix)
         versionFolders = []
         versionItems = []
         versionMarker = (nil, nil)
-        hasMore = false
         isLoadingAll = false
+        isLoadingMore = false
         error = nil
-        isLoading = true
         pendingRows = []
+        // Adopt only a listing already in the current order (re-sorting a large one here would block the main actor).
+        if let seed, mode == .objects, filterText.isEmpty, seed.prefix == prefix, seed.sortColumn == sortColumn,
+           seed.sortAscending == sortAscending {
+            accumulator = seed.accumulator
+            hasMore = seed.hasMore
+            isLoading = false
+            applyRows(seed.rows, keepSelection: true)
+            return
+        }
+        accumulator = ListingAccumulator(prefix: prefix)
+        hasMore = false
+        isLoading = true
         applyRows([], keepSelection: true)
         loadTask = Task { [weak self] in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled else { return }
+            }
             await self?.loadNextPage(generation: current)
-            self?.isLoading = false
+            // An older listing that was cancelled must not end the loading state of the newer one.
+            if self?.generation == current { self?.isLoading = false }
         }
     }
 
@@ -203,7 +345,7 @@ final class BrowserModel {
         filterTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard !Task.isCancelled else { return }
-            self?.reload()
+            self?.reloadListing()
         }
     }
 
@@ -213,7 +355,7 @@ final class BrowserModel {
         let current = generation
         loadTask = Task { [weak self] in
             await self?.loadNextPage(generation: current)
-            self?.isLoadingMore = false
+            if self?.generation == current { self?.isLoadingMore = false }
         }
     }
 
@@ -229,9 +371,11 @@ final class BrowserModel {
                 await self.loadNextPage(generation: current)
                 if self.error != nil { break }
             }
-            self?.isLoadingAll = false
-            self?.isLoadingMore = false
-            await self?.flushPending(generation: current)
+            // A newer listing owns the loading flags; clearing them would let two page loads run at once.
+            guard let self, self.generation == current else { return }
+            self.isLoadingAll = false
+            self.isLoadingMore = false
+            await self.flushPending(generation: current)
         }
     }
 
@@ -321,7 +465,9 @@ final class BrowserModel {
         } else {
             sorted = await Task.detached(priority: .userInitiated) { ListingSorter.sorted(all, by: column, ascending: ascending) }.value
         }
-        guard current == generation else { return }
+        // A newer sort cancels this one; the detached sort still finishes, so check before applying.
+        guard current == generation, !Task.isCancelled else { return }
+        isSorting = false
         applyRows(sorted, keepSelection: true)
     }
 
@@ -329,14 +475,16 @@ final class BrowserModel {
         guard column != sortColumn || ascending != sortAscending else { return }
         sortColumn = column
         sortAscending = ascending
+        isSorting = true
         let current = generation
         sortTask?.cancel()
         sortTask = Task { [weak self] in await self?.resort(generation: current) }
+        columns.resort(by: column, ascending: ascending)
     }
 
     private func applyRows(_ newRows: [ListingRow], keepSelection: Bool) {
         rows = newRows
-        rowsRevision &+= 1
+        rowsRevision = ListingRevision.next()
         if keepSelection, !selection.isEmpty {
             let ids = Set(newRows.map(\.id))
             let kept = selection.intersection(ids)
@@ -358,12 +506,16 @@ final class BrowserModel {
 
     /// Selects a key once it is listed (used by deep links).
     func select(key: String) {
-        if let row = rows.first(where: { $0.key == key || $0.key == key + "/" }) { selection = [row.id] }
+        guard let row = rows.first(where: { $0.key == key || $0.key == key + "/" }) else { return }
+        selectInColumn(prefix, ids: [row.id])
     }
 
     // MARK: Operations — helpers
 
     private func toast(_ message: String, isError: Bool = false) { workspace?.showToast(message, isError: isError) }
+
+    /// A short message at the bottom of the window (used by the preview window after saving).
+    func showToast(_ message: String, isError: Bool = false) { toast(message, isError: isError) }
 
     private func refuseIfReadOnly() -> Bool {
         guard isReadOnly else { return false }
@@ -588,10 +740,11 @@ final class BrowserModel {
 
     // MARK: Create, rename, copy, move
 
-    func createFolder(named name: String) async -> String? {
+    /// Creates `parent` + `name` + `/` (a zero-byte folder marker).
+    func createFolder(named name: String, in parent: String) async -> String? {
         if let problem = KeyRewrite.validateName(name) { return problem }
         guard !refuseIfReadOnly() else { return StorageError.readOnly.message }
-        let key = prefix + name + "/"
+        let key = parent + name + "/"
         do {
             _ = try await storage.putObject(bucket: bucket, key: key, body: Data(), options: ObjectWriteOptions(contentType: "application/x-directory"),
                                             progress: nil)

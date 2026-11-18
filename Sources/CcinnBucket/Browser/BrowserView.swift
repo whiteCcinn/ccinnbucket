@@ -13,10 +13,15 @@ struct BrowserView: View {
             PathBar(model: model, workspace: workspace)
             Divider()
             ZStack {
-                ObjectTable(rows: model.rows, revision: model.rowsRevision, selection: model.selection,
-                            showsVersions: model.mode == .versions, sortColumn: model.sortColumn, sortAscending: model.sortAscending,
-                            acceptsDrops: !model.isReadOnly, actions: tableActions)
-                overlay
+                if model.isColumnView {
+                    ColumnBrowserView(model: model, workspace: workspace)
+                } else {
+                    ObjectTable(rows: model.rows, revision: model.rowsRevision, selection: model.selection,
+                                showsVersions: model.mode == .versions, sortColumn: model.sortColumn, sortAscending: model.sortAscending,
+                                acceptsDrops: !model.isReadOnly, actions: tableActions)
+                    listingOverlay
+                }
+                busyOverlay
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
@@ -24,11 +29,11 @@ struct BrowserView: View {
         }
         .sheet(item: $model.sheet) { sheet in
             switch sheet {
-            case .newFolder: NewFolderSheet(model: model)
+            case let .newFolder(parent): NewFolderSheet(model: model, parent: parent)
             case let .rename(row): RenameSheet(model: model, row: row)
             case let .transfer(rows, move): TransferDestinationSheet(model: model, workspace: workspace, rows: rows, move: move)
             case let .presign(row): PresignSheet(model: model, row: row, maximum: workspace.capabilities.maxPresignExpiry)
-            case let .preview(row): PreviewSheet(row: row, bucket: model.bucket, storage: model.storage)
+            case let .preview(row): PreviewSheet(row: row, model: model)
             }
         }
         .confirmationDialog(model.pendingDelete?.title ?? "", isPresented: Binding(get: { model.pendingDelete != nil },
@@ -56,8 +61,9 @@ struct BrowserView: View {
             : "Replace \(conflict.existing.count.formatted()) existing objects?"
     }
 
+    /// Loading, error and empty states of the list.
     @ViewBuilder
-    private var overlay: some View {
+    private var listingOverlay: some View {
         if let error = model.error, model.rows.isEmpty {
             VStack(spacing: 12) {
                 ErrorBanner(message: error)
@@ -79,6 +85,11 @@ struct BrowserView: View {
                 }
             }
         }
+    }
+
+    /// Progress of counting objects for an operation (both views).
+    @ViewBuilder
+    private var busyOverlay: some View {
         if let message = model.busyMessage {
             VStack {
                 Spacer()
@@ -106,7 +117,7 @@ struct BrowserView: View {
         actions.dropFiles = { urls, folder in model.upload(urls, into: folder) }
         actions.delete = { model.requestDelete($0) }
         actions.quickLook = { model.sheet = .preview($0) }
-        actions.menu = { rows in ObjectMenuBuilder(model: model, workspace: workspace).menu(for: rows) }
+        actions.menu = { rows in ObjectMenuBuilder(model: model, workspace: workspace).menu(for: rows, folder: model.prefix) }
         return actions
     }
 }
@@ -144,6 +155,9 @@ private struct PathBar: View {
             .padding(.vertical, 5)
             .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 7))
             .help("Shows keys starting with this text in the current folder (server-side)")
+            if model.isColumnView {
+                SortMenu(model: model)
+            }
             Picker("", selection: Binding(get: { model.mode }, set: { model.setMode($0) })) {
                 Text("Objects").tag(BrowserModel.Mode.objects)
                 Text("Versions").tag(BrowserModel.Mode.versions)
@@ -179,6 +193,34 @@ private struct PathBar: View {
             return true
         }
         .help(prefix.isEmpty ? "\(model.bucket) (bucket root)" : prefix)
+    }
+}
+
+/// Sort order for the column view, which has no column headers.
+private struct SortMenu: View {
+    let model: BrowserModel
+
+    var body: some View {
+        Menu {
+            Picker("Sort By", selection: Binding(get: { model.sortColumn }, set: { model.setSort($0, ascending: model.sortAscending) })) {
+                Text("Name").tag(ListingSortColumn.name)
+                Text("Size").tag(ListingSortColumn.size)
+                Text("Last Modified").tag(ListingSortColumn.modified)
+                Text("Storage Class").tag(ListingSortColumn.storageClass)
+                Text("Kind").tag(ListingSortColumn.kind)
+            }
+            .pickerStyle(.inline)
+            Picker("Order", selection: Binding(get: { model.sortAscending }, set: { model.setSort(model.sortColumn, ascending: $0) })) {
+                Text("Ascending").tag(true)
+                Text("Descending").tag(false)
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label("Sort By", systemImage: "arrow.up.arrow.down")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Sort the columns (folders stay first)")
     }
 }
 
@@ -253,13 +295,14 @@ struct ObjectMenuBuilder {
         return item
     }
 
-    func menu(for rows: [ListingRow]) -> NSMenu? {
+    /// - Parameter folder: the folder of the list or column, for New Folder and Upload on its blank area.
+    func menu(for rows: [ListingRow], folder: String) -> NSMenu? {
         let menu = NSMenu()
         menu.autoenablesItems = false
         let writable = !model.isReadOnly
         guard !rows.isEmpty else {
-            menu.addItem(item("New Folder…", "folder.badge.plus", enabled: writable) { model.sheet = .newFolder })
-            menu.addItem(item("Upload Files…", "arrow.up.doc", enabled: writable) { UploadPanel.run(model: model) })
+            menu.addItem(item("New Folder…", "folder.badge.plus", enabled: writable) { model.sheet = .newFolder(parent: folder) })
+            menu.addItem(item("Upload Files…", "arrow.up.doc", enabled: writable) { UploadPanel.run(model: model, into: folder) })
             menu.addItem(.separator())
             menu.addItem(item("Refresh", "arrow.clockwise") { model.reload() })
             return menu
@@ -298,15 +341,17 @@ struct ObjectMenuBuilder {
 }
 
 enum UploadPanel {
+    /// - Parameter folder: where to upload; the current folder when `nil`.
     @MainActor
-    static func run(model: BrowserModel) {
+    static func run(model: BrowserModel, into folder: String? = nil) {
+        let destination = folder ?? model.prefix
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         panel.prompt = "Upload"
-        panel.message = "Choose files or folders to upload to \(model.bucket)/\(model.prefix)"
+        panel.message = "Choose files or folders to upload to \(model.bucket)/\(destination)"
         guard panel.runModal() == .OK else { return }
-        model.upload(panel.urls)
+        model.upload(panel.urls, into: destination)
     }
 }

@@ -50,6 +50,8 @@ final class WindowSession {
 
     var phase: Phase = .accounts
     var connectError: String?
+    /// Export or import of connections, shown as a sheet over whatever the window shows.
+    var connectionTransfer: ConnectionTransferRequest?
     private var connectTask: Task<Void, Never>?
     /// Shared by every window of this process: hands accounts and credentials to the windows they open.
     private let handoff: WindowHandoff<WindowConnection>

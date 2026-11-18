@@ -56,17 +56,20 @@ struct WorkspaceView: View {
                 .disabled(!(workspace.browser?.canGoUp ?? false))
                 .help("Enclosing folder (⌘↑)")
         }
+        ToolbarItem(placement: .navigation) {
+            ViewStylePicker(browser: workspace.browser)
+        }
         ToolbarItem(placement: .principal) {
             AccountBadge(workspace: workspace)
         }
         ToolbarItemGroup(placement: .primaryAction) {
             let browser = workspace.browser
-            let selection = browser?.selectedRows ?? []
+            let selection = browser?.actionRows ?? []
             let writable = !workspace.isReadOnly && browser != nil
             Button { if let browser { UploadPanel.run(model: browser) } } label: { Label("Upload", systemImage: "arrow.up.doc") }
                 .disabled(!writable)
                 .help(workspace.isReadOnly ? "Read-only account" : "Upload files or folders (or drop them on the list)")
-            Button { browser?.sheet = .newFolder } label: { Label("New Folder", systemImage: "folder.badge.plus") }
+            Button { if let browser { browser.sheet = .newFolder(parent: browser.prefix) } } label: { Label("New Folder", systemImage: "folder.badge.plus") }
                 .disabled(!writable)
                 .help("New folder (⇧⌘N)")
             Button { browser?.chooseDownloadDestination(for: selection) } label: { Label("Download", systemImage: "arrow.down.circle") }
@@ -102,6 +105,22 @@ struct WorkspaceView: View {
     /// Another window connected to this account with the credentials in use (each window has its own connection).
     private func openWindowWithThisConnection() {
         if let request = session.duplicateRequest() { openWindow(id: RootView.windowGroupID, value: request) }
+    }
+}
+
+/// List or columns, like Finder's view buttons (Versions always use the list).
+private struct ViewStylePicker: View {
+    let browser: BrowserModel?
+
+    var body: some View {
+        Picker("View", selection: Binding(get: { browser?.effectiveViewStyle ?? .list }, set: { browser?.setViewStyle($0) })) {
+            Label("as List", systemImage: "list.bullet").tag(BrowserViewStyle.list)
+            Label("as Columns", systemImage: "rectangle.split.3x1").tag(BrowserViewStyle.columns)
+        }
+        .pickerStyle(.segmented)
+        .labelStyle(.iconOnly)
+        .disabled(browser == nil || browser?.mode == .versions)
+        .help(browser?.mode == .versions ? "Versions are always shown as a list" : "Show items in a list (⌘2) or in columns (⌘3)")
     }
 }
 

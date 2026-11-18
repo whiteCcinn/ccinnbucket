@@ -13,13 +13,26 @@ struct ObjectTableActions {
     var delete: ([ListingRow]) -> Void = { _ in }
     var quickLook: (ListingRow) -> Void = { _ in }
     var menu: ([ListingRow]) -> NSMenu? = { _ in nil }
+    /// ← and → (column style).
+    var moveLeft: () -> Void = {}
+    var moveRight: () -> Void = {}
 }
 
 /// Virtualised object list on `NSTableView`: reused cells, only visible rows are materialised, so 50,000+
 /// rows scroll smoothly. Supports sorting, multi-selection, type-select, Finder drops (upload) and keyboard
 /// shortcuts (Return opens, Space previews, ⌫ deletes).
+///
+/// The column style is one column of the column view: names only, no header, a chevron on folders, ← and →
+/// between columns, and a single click that re-applies the selection (so clicking the highlighted folder again
+/// clears the selection to its right).
 struct ObjectTable: NSViewRepresentable {
+    enum Style {
+        case list
+        case column
+    }
+
     let rows: [ListingRow]
+    /// Changes whenever `rows` change (unique across listings, see `ListingRevision`).
     let revision: Int
     let selection: Set<String>
     let showsVersions: Bool
@@ -27,6 +40,9 @@ struct ObjectTable: NSViewRepresentable {
     let sortAscending: Bool
     let acceptsDrops: Bool
     let actions: ObjectTableActions
+    var style: Style = .list
+    /// A new non-zero value makes this table the first responder (column style).
+    var focusRequest = 0
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -34,18 +50,22 @@ struct ObjectTable: NSViewRepresentable {
         let tableView = ObjectTableView()
         tableView.coordinator = context.coordinator
         tableView.style = .inset
-        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.usesAlternatingRowBackgroundColors = style == .list
         tableView.allowsMultipleSelection = true
-        tableView.allowsColumnReordering = true
-        tableView.allowsColumnResizing = true
+        tableView.allowsColumnReordering = style == .list
+        tableView.allowsColumnResizing = style == .list
         tableView.allowsTypeSelect = true
-        tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        tableView.columnAutoresizingStyle = style == .list ? .firstColumnOnlyAutoresizingStyle : .uniformColumnAutoresizingStyle
         tableView.rowHeight = 24
         tableView.intercellSpacing = NSSize(width: 6, height: 2)
         tableView.dataSource = context.coordinator
         tableView.delegate = context.coordinator
         tableView.target = context.coordinator
         tableView.doubleAction = #selector(Coordinator.doubleClicked(_:))
+        if style == .column {
+            tableView.headerView = nil
+            tableView.action = #selector(Coordinator.clicked(_:))
+        }
         tableView.menu = NSMenu()
         tableView.menu?.delegate = context.coordinator
         tableView.registerForDraggedTypes([.fileURL])
@@ -54,7 +74,7 @@ struct ObjectTable: NSViewRepresentable {
         let scrollView = NSScrollView()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = style == .list
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         context.coordinator.tableView = tableView
@@ -74,6 +94,7 @@ struct ObjectTable: NSViewRepresentable {
         } else if previous.selection != selection {
             coordinator.applySelection()
         }
+        if focusRequest != 0, focusRequest != previous.focusRequest { coordinator.takeFocus() }
     }
 
     @MainActor
@@ -107,6 +128,9 @@ struct ObjectTable: NSViewRepresentable {
         }
 
         private var columnSpecs: [ColumnSpec] {
+            if parent.style == .column {
+                return [ColumnSpec(id: "name", title: "Name", width: 200, minWidth: 80, sort: nil, alignment: .left)]
+            }
             var specs = [ColumnSpec(id: "name", title: "Name", width: 300, minWidth: 160, sort: .name, alignment: .left)]
             if parent.showsVersions {
                 specs.append(ColumnSpec(id: "version", title: "Version ID", width: 180, minWidth: 80, sort: nil, alignment: .left))
@@ -131,9 +155,22 @@ struct ObjectTable: NSViewRepresentable {
                 column.minWidth = spec.minWidth
                 column.headerCell.alignment = spec.alignment
                 if let sort = spec.sort { column.sortDescriptorPrototype = NSSortDescriptor(key: sort.rawValue, ascending: true) }
+                if parent.style == .column { column.resizingMask = .autoresizingMask }
                 tableView.addTableColumn(column)
             }
-            tableView.sortDescriptors = [NSSortDescriptor(key: parent.sortColumn.rawValue, ascending: parent.sortAscending)]
+            if parent.style == .list {
+                tableView.sortDescriptors = [NSSortDescriptor(key: parent.sortColumn.rawValue, ascending: parent.sortAscending)]
+            } else {
+                tableView.sizeLastColumnToFit()
+            }
+        }
+
+        /// Makes the table the first responder once it is in a window (a column that was just shown may not be yet).
+        func takeFocus() {
+            Task { @MainActor [weak tableView] in
+                guard let tableView, let window = tableView.window, window.firstResponder !== tableView else { return }
+                window.makeFirstResponder(tableView)
+            }
         }
 
         // MARK: Data
@@ -215,33 +252,7 @@ struct ObjectTable: NSViewRepresentable {
         }
 
         private func nameCell(_ tableView: NSTableView, _ item: ListingRow) -> NSView {
-            let id = NSUserInterfaceItemIdentifier("name")
-            let cell: NSTableCellView
-            if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView {
-                cell = reused
-            } else {
-                cell = NSTableCellView()
-                cell.identifier = id
-                let image = NSImageView()
-                image.translatesAutoresizingMaskIntoConstraints = false
-                image.imageScaling = .scaleProportionallyDown
-                let field = NSTextField(labelWithString: "")
-                field.lineBreakMode = .byTruncatingMiddle
-                field.translatesAutoresizingMaskIntoConstraints = false
-                cell.addSubview(image)
-                cell.addSubview(field)
-                cell.imageView = image
-                cell.textField = field
-                NSLayoutConstraint.activate([
-                    image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
-                    image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                    image.widthAnchor.constraint(equalToConstant: 18),
-                    image.heightAnchor.constraint(equalToConstant: 16),
-                    field.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 6),
-                    field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
-                    field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                ])
-            }
+            let cell = parent.style == .column ? columnNameCell(tableView, isFolder: item.isFolder) : listNameCell(tableView)
             let isMarker = item.version?.isDeleteMarker == true
             let symbol = isMarker ? "trash.slash" : Theme.symbol(forKey: item.key, isFolder: item.isFolder)
             let configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
@@ -252,6 +263,66 @@ struct ObjectTable: NSViewRepresentable {
             cell.textField?.textColor = isMarker ? .secondaryLabelColor : .labelColor
             cell.toolTip = item.key
             return cell
+        }
+
+        private func listNameCell(_ tableView: NSTableView) -> NSTableCellView {
+            let id = NSUserInterfaceItemIdentifier("name")
+            if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView { return reused }
+            let (cell, image, field) = Self.makeNameCell(identifier: id)
+            NSLayoutConstraint.activate([
+                image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
+            ])
+            return cell
+        }
+
+        /// Name cell of a column: folders end in a chevron, as in Finder (two cell kinds, so reuse never mixes them).
+        private func columnNameCell(_ tableView: NSTableView, isFolder: Bool) -> NSTableCellView {
+            let id = NSUserInterfaceItemIdentifier(isFolder ? "column-folder" : "column-file")
+            if let reused = tableView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView { return reused }
+            let (cell, image, field) = Self.makeNameCell(identifier: id)
+            image.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2).isActive = true
+            guard isFolder else {
+                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2).isActive = true
+                return cell
+            }
+            let chevron = NSImageView()
+            chevron.translatesAutoresizingMaskIntoConstraints = false
+            chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold))
+            chevron.contentTintColor = .tertiaryLabelColor
+            chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
+            cell.addSubview(chevron)
+            NSLayoutConstraint.activate([
+                chevron.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
+                chevron.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                field.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -4),
+            ])
+            return cell
+        }
+
+        private static func makeNameCell(identifier: NSUserInterfaceItemIdentifier) -> (NSTableCellView, NSImageView, NSTextField) {
+            let cell = NSTableCellView()
+            cell.identifier = identifier
+            let image = NSImageView()
+            image.translatesAutoresizingMaskIntoConstraints = false
+            image.imageScaling = .scaleProportionallyDown
+            let field = NSTextField(labelWithString: "")
+            field.lineBreakMode = .byTruncatingMiddle
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            cell.addSubview(image)
+            cell.addSubview(field)
+            cell.imageView = image
+            cell.textField = field
+            NSLayoutConstraint.activate([
+                image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                image.widthAnchor.constraint(equalToConstant: 18),
+                image.heightAnchor.constraint(equalToConstant: 16),
+                field.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 6),
+                field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return (cell, image, field)
         }
 
         func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? {
@@ -291,6 +362,13 @@ struct ObjectTable: NSViewRepresentable {
         }
 
         // MARK: Actions
+
+        /// Column style: a click re-applies the selection rule, even when the selection did not change.
+        @objc func clicked(_ sender: NSTableView) {
+            guard !applyingSelection else { return }
+            let ids = Set(sender.selectedRowIndexes.compactMap { parent.rows.indices.contains($0) ? parent.rows[$0].id : nil })
+            parent.actions.selectionChanged(ids)
+        }
 
         @objc func doubleClicked(_ sender: NSTableView) {
             let row = sender.clickedRow
@@ -355,7 +433,11 @@ final class ObjectTableView: NSTableView {
     weak var coordinator: ObjectTable.Coordinator?
 
     override func keyDown(with event: NSEvent) {
+        let isColumn = coordinator?.parent.style == .column
+        let plainArrow = event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
         switch event.keyCode {
+        case 123 where isColumn && plainArrow: coordinator?.parent.actions.moveLeft() // ←
+        case 124 where isColumn && plainArrow: coordinator?.parent.actions.moveRight() // →
         case 36, 76: coordinator?.openSelection() // Return, Enter
         case 49: coordinator?.quickLookSelection() // Space
         case 51 where event.modifierFlags.contains(.command), 117: coordinator?.deleteSelection() // ⌘⌫, forward delete

@@ -1,0 +1,86 @@
+[
+  {
+    "file": "data-l19.zst",
+    "format": "zstd",
+    "size": 85748,
+    "sha256": "016a3c60751bbc3bf9efc00d2101e735e3f95d8aebf98ac71776be284b4dd14b"
+  },
+  {
+    "file": "frames.zst",
+    "format": "zstd",
+    "size": 85760,
+    "sha256": "50fecdbd45f5787bca45f07f5b08cced32efd320db85848065250a91a4fbeee4"
+  },
+  {
+    "file": "multi.gz",
+    "format": "gzip",
+    "size": 85760,
+    "sha256": "50fecdbd45f5787bca45f07f5b08cced32efd320db85848065250a91a4fbeee4"
+  },
+  {
+    "file": "random.gz",
+    "format": "gzip",
+    "size": 16384,
+    "sha256": "395285e7761772dea971ba9eb2eadddae122611d1e8e2bb4f1a40a3782427029"
+  },
+  {
+    "file": "random.zst",
+    "format": "zstd",
+    "size": 16384,
+    "sha256": "395285e7761772dea971ba9eb2eadddae122611d1e8e2bb4f1a40a3782427029"
+  },
+  {
+    "file": "runs.zst",
+    "format": "zstd",
+    "size": 303000,
+    "sha256": "584e61b4a5b85b30fc4b6b92d372feea52510b0cfa8a353c63884e5bdbfd2377"
+  },
+  {
+    "file": "small.zst",
+    "format": "zstd",
+    "size": 12,
+    "sha256": "7a7c5e8d4ca612fd27d2bd63dca6d85cb759b6366abf6556cbcd483db9416aac"
+  },
+  {
+    "file": "text-1-named.gz",
+    "format": "gzip",
+    "size": 153600,
+    "sha256": "0cd98684572e09a4998fd5a93c9a9da90a239014ba2a4b5ce62438462272f3af"
+  },
+  {
+    "file": "text-9.gz",
+    "format": "gzip",
+    "size": 153600,
+    "sha256": "0cd98684572e09a4998fd5a93c9a9da90a239014ba2a4b5ce62438462272f3af"
+  },
+  {
+    "file": "text-l1.zst",
+    "format": "zstd",
+    "size": 153600,
+    "sha256": "0cd98684572e09a4998fd5a93c9a9da90a239014ba2a4b5ce62438462272f3af"
+  },
+  {
+    "file": "text-l19.zst",
+    "format": "zstd",
+    "size": 153600,
+    "sha256": "0cd98684572e09a4998fd5a93c9a9da90a239014ba2a4b5ce62438462272f3af"
+  },
+  {
+    "file": "text-l3-nocheck.zst",
+    "format": "zstd",
+    "size": 153600,
+    "sha256": "0cd98684572e09a4998fd5a93c9a9da90a239014ba2a4b5ce62438462272f3af"
+  },
+  {
+    "file": "text-l3.zst",
+    "format": "zstd",
+    "size": 153600,
+    "sha256": "0cd98684572e09a4998fd5a93c9a9da90a239014ba2a4b5ce62438462272f3af"
+  },
+  {
+    "file": "text-long24-stdin.zst",
+    "format": "zstd",
+    "size": 153600,
+    "sha256": "0cd98684572e09a4998fd5a93c9a9da90a239014ba2a4b5ce62438462272f3af"
+  }
+]

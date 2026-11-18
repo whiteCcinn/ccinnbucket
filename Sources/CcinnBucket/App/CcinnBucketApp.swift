@@ -90,6 +90,12 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: phaseKey)
+        .sheet(item: $session.connectionTransfer) { request in
+            switch request {
+            case .export: ExportConnectionsSheet(store: store)
+            case let .import(url): ImportConnectionsSheet(store: store, url: url)
+            }
+        }
         .focusedSceneValue(\.windowSession, session)
         .navigationTitle(windowTitle)
         .presentsSoftwareUpdates()
@@ -147,10 +153,10 @@ struct ConnectingView: View {
 ///
 ///     CcinnBucket --account <saved name>
 ///     CcinnBucket --connect http://127.0.0.1:19900 --access-key AK --secret-key SK [--kind minio] [--region r] [--name n] [--read-only]
-///                 [--bucket b] [--prefix p/] [--select key] [--versions] [--sort size|modified] [--load-all]
+///                 [--bucket b] [--prefix p/] [--select key] [--view list|columns] [--versions] [--sort size|modified] [--load-all]
 ///                 [--settings versioning|lifecycle|cors|policy|acl|encryption|uploads] [--transfers] [--upload /path/file]
 ///                 [--preview] [--edit-metadata] [--confirm-delete] [--share] [--hide-inspector]
-///     CcinnBucket --data-dir /tmp/demo --demo-accounts [--new-account minio|oss|…]
+///     CcinnBucket --data-dir /tmp/demo --demo-accounts [--new-account minio|oss|…] [--export-connections] [--import-connections file]
 ///     … [--duplicate-window] [--appearance light|dark] [--snapshot out.png --snapshot-delay 6 --quit-after-snapshot [--snapshot-window title]]
 ///
 /// Secrets passed on the command line live only in memory and are never saved.
@@ -182,6 +188,8 @@ enum LaunchArguments {
         guard !consumed else { return false }
         consumed = true
         if has("--demo-accounts") { seedDemoAccounts(store) }
+        if has("--export-connections") { session.connectionTransfer = .export }
+        if let path = value("--import-connections") { session.connectionTransfer = .import(URL(fileURLWithPath: path)) }
 
         var account: StorageAccount?
         var credentials: SigningCredentials?
@@ -211,6 +219,7 @@ enum LaunchArguments {
             workspace.open(bucket: bucket, prefix: value("--prefix") ?? "")
         }
         guard let browser = workspace.browser else { return }
+        if let style = value("--view").flatMap(BrowserViewStyle.init(rawValue:)) { browser.setViewStyle(style, remember: false) }
         if has("--versions") { browser.setMode(.versions) }
         await waitUntil { !browser.isLoading }
         if let sort = value("--sort") {
@@ -506,8 +515,20 @@ struct AppCommands: Commands {
     @FocusedValue(\.windowSession) private var session
     @Environment(\.openWindow) private var openWindow
 
-    private var workspace: WorkspaceModel? { session?.workspace }
-    private var browser: BrowserModel? { session?.workspace?.browser }
+    /// A sheet or dialog is open in the focused window. Window commands are then disabled: their shortcuts (⌘↑, ⌘⌫,
+    /// ⌘R, ⌘[ …) would otherwise act on the browser behind the sheet and steal keys from a text editor in it (⌘↑
+    /// moved to the enclosing folder, ⌘⌫ asked to delete the selected object).
+    private var isModalOpen: Bool {
+        guard let session else { return false }
+        if session.connectionTransfer != nil { return true }
+        guard let workspace = session.workspace else { return false }
+        if workspace.isCreatingBucket || workspace.settingsBucket != nil { return true }
+        guard let browser = workspace.browser else { return false }
+        return browser.sheet != nil || browser.pendingDelete != nil || browser.pendingUploadConflict != nil
+    }
+
+    private var workspace: WorkspaceModel? { isModalOpen ? nil : session?.workspace }
+    private var browser: BrowserModel? { isModalOpen ? nil : session?.workspace?.browser }
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
@@ -519,9 +540,25 @@ struct AppCommands: Commands {
             .keyboardShortcut("n", modifiers: [.command, .option])
             .disabled(workspace == nil)
             Divider()
+            Button("Export Connections…") { session?.connectionTransfer = .export }
+                .disabled(session == nil || isModalOpen || AppServices.shared.accounts.accounts.isEmpty)
+            Button("Import Connections…") {
+                if let request = ConnectionTransferRequest.chooseImportFile() { session?.connectionTransfer = request }
+            }
+            .disabled(session == nil || isModalOpen)
+            Divider()
             Button("Disconnect") { session?.disconnect() }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(workspace == nil)
+        }
+        CommandGroup(before: .toolbar) {
+            Toggle("as List", isOn: Binding(get: { browser?.effectiveViewStyle == .list }, set: { if $0 { browser?.setViewStyle(.list) } }))
+                .keyboardShortcut("2", modifiers: .command)
+                .disabled(browser == nil || browser?.mode == .versions)
+            Toggle("as Columns", isOn: Binding(get: { browser?.effectiveViewStyle == .columns }, set: { if $0 { browser?.setViewStyle(.columns) } }))
+                .keyboardShortcut("3", modifiers: .command)
+                .disabled(browser == nil || browser?.mode == .versions)
+            Divider()
         }
         CommandMenu("Go") {
             Button("Back") { browser?.goBack() }
@@ -544,15 +581,15 @@ struct AppCommands: Commands {
             Button("Upload…") { if let browser { UploadPanel.run(model: browser) } }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
                 .disabled(browser == nil || workspace?.isReadOnly == true)
-            Button("New Folder…") { browser?.sheet = .newFolder }
+            Button("New Folder…") { if let browser { browser.sheet = .newFolder(parent: browser.prefix) } }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(browser == nil || workspace?.isReadOnly == true)
-            Button("Download…") { if let browser { browser.chooseDownloadDestination(for: browser.selectedRows) } }
+            Button("Download…") { if let browser { browser.chooseDownloadDestination(for: browser.actionRows) } }
                 .keyboardShortcut("d", modifiers: [.command, .option])
-                .disabled(browser?.selection.isEmpty ?? true)
-            Button("Delete…") { if let browser { browser.requestDelete(browser.selectedRows) } }
+                .disabled(browser?.actionRows.isEmpty ?? true)
+            Button("Delete…") { if let browser { browser.requestDelete(browser.actionRows) } }
                 .keyboardShortcut(.delete, modifiers: .command)
-                .disabled((browser?.selection.isEmpty ?? true) || workspace?.isReadOnly == true)
+                .disabled((browser?.actionRows.isEmpty ?? true) || workspace?.isReadOnly == true)
             Divider()
             Button("Show Versions") { browser?.setMode(browser?.mode == .versions ? .objects : .versions) }
                 .keyboardShortcut("v", modifiers: [.command, .option])
