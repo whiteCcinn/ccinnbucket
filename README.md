@@ -35,12 +35,16 @@ Object storage tools tend to be web consoles, command-line tools or cross-platfo
 
 - **Every common provider** — Amazon S3 (virtual-hosted or path-style, automatic bucket-region discovery, STS session tokens), S3-compatible services with custom endpoints, and the native Alibaba Cloud OSS API (public, internal and accelerate endpoints, custom domains, OSS V4 or V1 signatures).
 - **Huge buckets stay smooth** — prefix/folder navigation with breadcrumbs and back/forward, ListObjectsV2 paging with continuation tokens (automatic V1 fallback for older servers), a virtualised table that scrolls through 50,000+ objects, server-side prefix filter, sorting and multi-select.
-- **Inspector and previews** — size, ETag, dates, storage class, content type, cache headers, user metadata, tags, version and encryption. Text (first 1 MiB via ranged GET), pretty-printed JSON, images, PDF and anything QuickLook understands.
+- **List or Finder-style columns** — switch with the toolbar or **View ▸ as List / as Columns** (⌘2 / ⌘3). Column view keeps every folder on the path on screen: select a folder to open it in the next column, use ← → ↑ ↓ to walk the tree, and every column pages through big folders on its own. Moving between columns reuses what is already listed, so there is no re-listing and no flicker.
+- **Inspector and previews** — size, ETag, dates, storage class, content type, cache headers, user metadata, tags, version and encryption. Text, indented JSON, images, PDF and anything QuickLook understands.
+- **gzip and Zstandard, any size** — `.gz` and `.zst`/`.zstd` objects are decompressed while they stream from the start of the object, with live progress (downloaded and decompressed bytes); **Show More** continues where it stopped. JSON inside (`bids.json.gz`) is indented. Select and copy any text, or **Copy All** the exact stored text. Decoders written from scratch in Swift (RFC 1952 and RFC 8878), fuzz-tested and checked against the real `gzip` and `zstd` tools.
+- **Edit text in place** *(writable accounts)* — fix a config or a JSON file in the preview window. Saving asks twice, shows the size change, warns about invalid JSON, compresses again as gzip or Zstandard, keeps headers, metadata, storage class, encryption and tags, and refuses if the object changed since you opened it. Minified JSON is edited indented and saved minified again.
 - **Edit in place** — change content type, cache headers, user metadata, storage class and tags; header changes use a server-side self-copy (multipart copy for big objects) that keeps everything you did not change.
 - **Transfers built for multi-GB files** — drag and drop files and folders, memory-bounded parallel multipart uploads with configurable part size, pause / resume / cancel (cancel aborts the multipart upload), resumable parallel ranged downloads into a partial file that is renamed only when complete, and a transfer queue with per-job and aggregate throughput.
 - **Everyday operations** — create folders, rename, copy and move (server-side; multipart copy above 5 GiB on S3 and 1 GiB on OSS), batch delete with a confirmation that states the object count, presigned links with an expiry picker, versions and delete markers with restore, and incomplete multipart uploads you can review and abort.
 - **Bucket settings** — versioning (enable/suspend), lifecycle, CORS, bucket policy, ACL and default encryption, shown as readable summaries plus the raw document.
 - **Multiple windows** — every window has its own connection, so you can browse different accounts side by side or keep two views of the same account. **File ▸ New CcinnBucket Window** (⌘N) opens the account screen. **New Window with This Connection** (⌥⌘N), also on the **New Window** toolbar button, connects another window to the current account with the same credentials, even when the account is not saved. **Open in New Window** in a saved account's context menu connects a new window to that account. Closing a window disconnects only that window.
+- **Move to a new Mac in one step** — **File ▸ Export Connections…** saves every connection (with its OSS options, colours, favourites, read-only and AI access settings) and your preferences to one file; secret keys are included only with a passphrase (AES-256-GCM, PBKDF2-SHA256 with 600,000 rounds). On the new Mac, **Import Connections…** shows what will be added and imports everything with one click.
 - **Safe by design** — secret keys and session tokens live only in the macOS Keychain; per-account **read-only mode** refuses every change below the user interface; destructive actions always ask first; credentials from `~/.aws`, `~/.alibabacloud`, `~/.ossutilconfig` and `~/.aliyun/config.json` can be imported read-only.
 - **AI access over MCP** *(opt-in)* — a built-in Model Context Protocol server lets Claude Code, Codex, Claude Desktop and other MCP clients list buckets and read objects through the accounts you enable. See [MCP server](#mcp-server--ai-access).
 
@@ -57,12 +61,14 @@ CcinnBucket runs on **macOS 14 Sonoma or later** (Apple silicon and Intel).
 
 ## Screenshots
 
-| 50,000 objects, fully loaded | Multipart upload in the transfer queue |
+| Column view | A 172 MB gzip log, decompressed while it streams |
 |---|---|
+| ![Column view](docs/screenshots/columns-light.png) | ![Compressed preview](docs/screenshots/compressed-preview-light.png) |
+| **50,000 objects, fully loaded** | **Multipart upload in the transfer queue** |
 | ![Large listing](docs/screenshots/large-light.png) | ![Transfers](docs/screenshots/transfers-light.png) |
 | **Accounts and providers** | **Versions and delete markers** |
 | ![Accounts](docs/screenshots/accounts-light.png) | ![Versions](docs/screenshots/versions-dark.png) |
-| **Ranged text preview (first 1 MiB of a 3 MB log)** | **Inspector in dark mode** |
+| **Text preview** | **Inspector in dark mode** |
 | ![Preview](docs/screenshots/preview-dark.png) | ![Inspector](docs/screenshots/browser-dark.png) |
 | **Editing metadata, storage class and tags** | **Presigned links** |
 | ![Edit metadata](docs/screenshots/edit-light.png) | ![Share link](docs/screenshots/share-light.png) |
@@ -91,11 +97,11 @@ The project page, release notes and issue tracker are also in the **Help** menu 
 
 ## Quick start
 
-1. Click **New Account**, pick a provider (Amazon S3, MinIO, R2, Ceph, Wasabi, Tencent COS, other S3-compatible or Alibaba Cloud OSS), and enter the endpoint (if needed), region and access key. Or click **Import from CLI Config…**.
+1. Click **New Account**, pick a provider (Amazon S3, MinIO, R2, Ceph, Wasabi, Tencent COS, other S3-compatible or Alibaba Cloud OSS), and enter the endpoint (if needed), region and access key. Or click **Import from CLI Config…**, or **Import Connections…** to bring everything over from another Mac.
 2. Press **Test** to list your buckets, then **Save & Connect**.
 3. Pick a bucket in the sidebar. Double-click folders to open them, press **Space** to preview, drop files on the list to upload.
 
-Useful shortcuts: **⌘[ / ⌘]** back/forward · **⌘↑** enclosing folder · **⌘R** refresh · **⇧⌘N** new folder · **⇧⌘U** upload · **⌥⌘D** download · **⌘⌫** delete · **⌥⌘V** versions · **⌥⌘I** inspector · **⌥⌘T** transfers · **⇧⌘D** disconnect · **⌘N** new window · **⌥⌘N** new window with this connection.
+Useful shortcuts: **⌘[ / ⌘]** back/forward · **⌘↑** enclosing folder · **⌘R** refresh · **⇧⌘N** new folder · **⇧⌘U** upload · **⌥⌘D** download · **⌘⌫** delete · **⌥⌘V** versions · **⌥⌘I** inspector · **⌥⌘T** transfers · **⇧⌘D** disconnect · **⌘N** new window · **⌥⌘N** new window with this connection · **⌘2 / ⌘3** list / columns · **⌘S** save an edited preview.
 
 ## MCP server / AI access
 

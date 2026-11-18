@@ -35,12 +35,16 @@
 
 - **覆盖常见服务商**——Amazon S3（虚拟主机式或路径式寻址、自动发现存储桶所在区域、STS 临时凭证）、自定义 Endpoint 的 S3 兼容服务，以及阿里云 OSS 原生 API（公网、内网与传输加速 Endpoint、自定义域名、OSS V4 或 V1 签名）。
 - **超大存储桶依然流畅**——基于前缀的文件夹导航（面包屑、前进/后退）、使用 continuation token 的 ListObjectsV2 分页（旧服务器自动回退到 V1）、虚拟化表格流畅滚动 5 万+ 对象、服务端前缀过滤、排序与多选。
-- **检查器与预览**——大小、ETag、时间、存储类型、Content-Type、缓存头、用户元数据、标签、版本与加密信息。文本（通过 Range 请求读取前 1 MiB）、格式化 JSON、图片、PDF，以及 QuickLook 能识别的一切格式。
+- **列表或 Finder 风格分栏**——用工具栏或 **显示 ▸ 列表 / 分栏（View ▸ as List / as Columns）**（⌘2 / ⌘3）切换。分栏视图把路径上的每一级文件夹都留在屏幕上：选中文件夹即在下一栏打开，用 ← → ↑ ↓ 在目录树中移动，每一栏独立分页加载大文件夹。在栏之间移动会复用已列出的内容，不重新请求、不闪烁。
+- **检查器与预览**——大小、ETag、时间、存储类型、Content-Type、缓存头、用户元数据、标签、版本与加密信息。文本、缩进后的 JSON、图片、PDF，以及 QuickLook 能识别的一切格式。
+- **gzip 与 Zstandard，任意大小**——`.gz` 与 `.zst`/`.zstd` 对象从开头边下载边解压，实时显示进度（已下载与已解压的字节数）；**Show More** 从上次停下的位置继续。其中的 JSON（如 `bids.json.gz`）会自动缩进。任意文本都可以选择复制，**Copy All** 复制原始文本。解码器用 Swift 从零实现（RFC 1952 与 RFC 8878），经过模糊测试，并与真实的 `gzip`、`zstd` 工具交叉验证。
+- **就地编辑文本**（可写账户）——在预览窗口中直接修改配置或 JSON 文件。保存前需要确认两次，显示大小变化，JSON 不合法时会提示；按 gzip 或 Zstandard 重新压缩，保留响应头、元数据、存储类型、加密与标签；如果对象在打开后被他人修改，则拒绝保存。压缩过的（单行）JSON 会以缩进形式编辑，保存时再压缩回单行。
 - **就地编辑**——修改 Content-Type、缓存头、用户元数据、存储类型与标签；头部修改通过服务端自我复制完成（大对象使用分片复制），未修改的内容全部保留。
 - **为数 GB 文件而生的传输**——拖放上传文件与文件夹；内存受控的并行分片上传，可配置分片大小；暂停 / 继续 / 取消（取消会中止分片上传）；可续传的并行 Range 下载，先写入临时文件、完成后才重命名；传输队列显示每个任务和总体吞吐量。
 - **日常操作**——新建文件夹、重命名、复制与移动（服务端完成；S3 超过 5 GiB、OSS 超过 1 GiB 时使用分片复制）、批量删除（确认框会显示对象数量）、带有效期选择的预签名链接、版本与删除标记（可恢复历史版本），以及可查看与中止的未完成分片上传。
 - **存储桶设置**——版本控制（启用/暂停）、生命周期、CORS、桶策略、ACL 与默认加密，以易读摘要和原始文档两种形式展示。
 - **多窗口**——每个窗口都有独立的连接，可以并排浏览不同的账户，也可以为同一个账户再开一个窗口。**文件 ▸ 新建 CcinnBucket 窗口（New CcinnBucket Window）**（⌘N）打开账户界面；**在新窗口中使用此连接（New Window with This Connection）**（⌥⌘N，工具栏上的 **新建窗口** 按钮也可以）会用相同的凭证在另一个窗口中连接当前账户，即使该账户没有保存；在已保存账户的右键菜单中选择 **在新窗口中打开（Open in New Window）**，即可在新窗口中连接该账户。关闭某个窗口只会断开这个窗口的连接。
+- **一步迁移到新 Mac**——**文件 ▸ 导出连接（Export Connections…）** 把所有连接（含 OSS 选项、颜色、收藏、只读与 AI 访问设置）以及偏好设置保存到一个文件；只有设置了口令时才会包含 Secret Key（AES-256-GCM，PBKDF2-SHA256 600,000 轮）。在新 Mac 上，**导入连接（Import Connections…）** 会先列出将要添加的内容，一键全部导入。
 - **安全设计**——Secret Key 与 Session Token 只保存在 macOS 钥匙串；每个账户可开启**只读模式**，在界面之下拒绝一切修改；破坏性操作必先确认；可以只读方式导入 `~/.aws`、`~/.alibabacloud`、`~/.ossutilconfig` 与 `~/.aliyun/config.json` 中的凭证。
 - **通过 MCP 提供 AI 访问**（需手动开启）——内置 Model Context Protocol 服务，Claude Code、Codex、Claude Desktop 等 MCP 客户端可以通过你授权的账户列出存储桶、读取对象。参见 [MCP 服务](#mcp-服务--ai-访问)。
 
@@ -57,12 +61,14 @@ CcinnBucket 需要 **macOS 14 Sonoma 或更高版本**（Apple 芯片与 Intel �
 
 ## 截图
 
-| 完整加载 50,000 个对象 | 传输队列中的分片上传 |
+| 分栏视图 | 边下载边解压的 172 MB gzip 日志 |
 |---|---|
+| ![分栏视图](docs/screenshots/columns-light.png) | ![压缩文件预览](docs/screenshots/compressed-preview-light.png) |
+| **完整加载 50,000 个对象** | **传输队列中的分片上传** |
 | ![大列表](docs/screenshots/large-light.png) | ![传输](docs/screenshots/transfers-light.png) |
 | **账户与服务商** | **版本与删除标记** |
 | ![账户](docs/screenshots/accounts-light.png) | ![版本](docs/screenshots/versions-dark.png) |
-| **Range 文本预览（3 MB 日志的前 1 MiB）** | **深色模式下的检查器** |
+| **文本预览** | **深色模式下的检查器** |
 | ![预览](docs/screenshots/preview-dark.png) | ![检查器](docs/screenshots/browser-dark.png) |
 | **编辑元数据、存储类型与标签** | **预签名链接** |
 | ![编辑元数据](docs/screenshots/edit-light.png) | ![分享链接](docs/screenshots/share-light.png) |
@@ -91,11 +97,11 @@ CcinnBucket 每天也会在后台自动检查一次，可以在 **设置 → 通
 
 ## 快速上手
 
-1. 点击 **New Account**，选择服务商（Amazon S3、MinIO、R2、Ceph、Wasabi、腾讯云 COS、其他 S3 兼容服务或阿里云 OSS），填写 Endpoint（如需要）、区域与 Access Key；也可以点击 **Import from CLI Config…** 导入。
+1. 点击 **New Account**，选择服务商（Amazon S3、MinIO、R2、Ceph、Wasabi、腾讯云 COS、其他 S3 兼容服务或阿里云 OSS），填写 Endpoint（如需要）、区域与 Access Key；也可以点击 **Import from CLI Config…** 导入，或点击 **Import Connections…** 从另一台 Mac 迁移全部连接。
 2. 点击 **Test** 列出存储桶，然后点击 **Save & Connect**。
 3. 在侧边栏选择存储桶。双击文件夹进入，按 **空格** 预览，把文件拖到列表即可上传。
 
-常用快捷键：**⌘[ / ⌘]** 后退/前进 · **⌘↑** 上级文件夹 · **⌘R** 刷新 · **⇧⌘N** 新建文件夹 · **⇧⌘U** 上传 · **⌥⌘D** 下载 · **⌘⌫** 删除 · **⌥⌘V** 版本 · **⌥⌘I** 检查器 · **⌥⌘T** 传输 · **⇧⌘D** 断开连接 · **⌘N** 新建窗口 · **⌥⌘N** 在新窗口中使用此连接。
+常用快捷键：**⌘[ / ⌘]** 后退/前进 · **⌘↑** 上级文件夹 · **⌘R** 刷新 · **⇧⌘N** 新建文件夹 · **⇧⌘U** 上传 · **⌥⌘D** 下载 · **⌘⌫** 删除 · **⌥⌘V** 版本 · **⌥⌘I** 检查器 · **⌥⌘T** 传输 · **⇧⌘D** 断开连接 · **⌘N** 新建窗口 · **⌥⌘N** 在新窗口中使用此连接 · **⌘2 / ⌘3** 列表 / 分栏 · **⌘S** 保存编辑后的预览。
 
 ## MCP 服务 / AI 访问
 
