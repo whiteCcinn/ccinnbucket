@@ -12,7 +12,7 @@ public enum MCPLauncher {
     /// When set, the Keychain is not consulted. Never use it with real credentials.
     public static let insecureTestSecretsVariable = "CCINNBUCKET_TEST_INSECURE_SECRETS"
 
-    public static let version = "1.2.0"
+    public static let version = "1.3.0"
 
     public static func run(arguments: [String], environment: [String: String] = ProcessInfo.processInfo.environment) async -> Int32 {
         signal(SIGPIPE, SIG_IGN) // A client that goes away must not kill us mid-write.
