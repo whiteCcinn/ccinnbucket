@@ -36,10 +36,10 @@ Object storage tools tend to be web consoles, command-line tools or cross-platfo
 - **Every common provider** — Amazon S3 (virtual-hosted or path-style, automatic bucket-region discovery, STS session tokens), S3-compatible services with custom endpoints, and the native Alibaba Cloud OSS API (public, internal and accelerate endpoints, custom domains, OSS V4 or V1 signatures).
 - **Huge buckets stay smooth** — prefix/folder navigation with breadcrumbs and back/forward, ListObjectsV2 paging with continuation tokens (automatic V1 fallback for older servers), a virtualised table that scrolls through 50,000+ objects, server-side prefix filter, sorting and multi-select.
 - **List or Finder-style columns** — switch with the toolbar or **View ▸ as List / as Columns** (⌘2 / ⌘3). Column view keeps every folder on the path on screen: select a folder to open it in the next column, use ← → ↑ ↓ to walk the tree, and every column pages through big folders on its own. Moving between columns reuses what is already listed, so there is no re-listing and no flicker.
-- **Inspector and previews** — size, ETag, dates, storage class, content type, cache headers, user metadata, tags, version and encryption. Text, indented JSON, images, PDF and anything QuickLook understands.
+- **Inspector and previews** — size, ETag, dates, storage class, content type, cache headers, user metadata, tags, version and encryption. Text, indented JSON, the first lines of gzip and Zstandard objects, images, PDF and anything QuickLook understands; **Preview** opens the full preview window.
 - **gzip and Zstandard, any size** — `.gz` and `.zst`/`.zstd` objects are decompressed while they stream from the start of the object, with live progress (downloaded and decompressed bytes); **Show More** continues where it stopped. JSON inside (`bids.json.gz`) is indented. Select and copy any text, or **Copy All** the exact stored text. Decoders written from scratch in Swift (RFC 1952 and RFC 8878), fuzz-tested and checked against the real `gzip` and `zstd` tools.
 - **Edit text in place** *(writable accounts)* — fix a config or a JSON file in the preview window. Saving asks twice, shows the size change, warns about invalid JSON, compresses again as gzip or Zstandard, keeps headers, metadata, storage class, encryption and tags, and refuses if the object changed since you opened it. Minified JSON is edited indented and saved minified again.
-- **Edit in place** — change content type, cache headers, user metadata, storage class and tags; header changes use a server-side self-copy (multipart copy for big objects) that keeps everything you did not change.
+- **Edit metadata and tags** — change content type, cache headers, user metadata, storage class and tags; header changes use a server-side self-copy (multipart copy for big objects) that keeps everything you did not change.
 - **Transfers built for multi-GB files** — drag and drop files and folders, memory-bounded parallel multipart uploads with configurable part size, pause / resume / cancel (cancel aborts the multipart upload), resumable parallel ranged downloads into a partial file that is renamed only when complete, and a transfer queue with per-job and aggregate throughput.
 - **Everyday operations** — create folders, rename, copy and move (server-side; multipart copy above 5 GiB on S3 and 1 GiB on OSS), batch delete with a confirmation that states the object count, presigned links with an expiry picker, versions and delete markers with restore, and incomplete multipart uploads you can review and abort.
 - **Bucket settings** — versioning (enable/suspend), lifecycle, CORS, bucket policy, ACL and default encryption, shown as readable summaries plus the raw document.
@@ -188,17 +188,20 @@ The MCP tests use two variables that are **for tests only**: `CCINNBUCKET_ACCOUN
 
 Signature tests use reference vectors produced by the official SDKs (`scripts/vectors/generate_signing_vectors.py`, run in a throw-away virtualenv; the SDKs are not project dependencies).
 
+Codec tests decode fixtures made with the real `gzip` and `zstd` tools (`scripts/vectors/make-decompression-fixtures.sh`; `manifest.json` records each file's decoded size and SHA-256) with any chunking and output limit, truncate and mutate them at random, round-trip our encoders (through `gzip -d` and `zstd -d` too when they are installed), and decode 30 MiB in bounded time. Set `DECOMPRESSION_FUZZ_ITERATIONS` for a deeper local fuzz run.
+
 ## Architecture
 
 ```
 CcinnBucket (SwiftUI + AppKit app; `CcinnBucket mcp` runs the MCP server headless)
- └─ CcinnBucketKit   accounts & Keychain, credential import, navigation, transfer queue, MCP server and tools
-     └─ StorageKit   URLSession transport, retries & clock skew, S3/OSS dialects, XML, listing, multipart & download engines
-         └─ StorageSigning   AWS SigV4, OSS V4/V1, presigning (pure, no I/O)
+ └─ CcinnBucketKit   accounts & Keychain, credential import, connection export, navigation, streaming previews and text saving, transfer queue, MCP server and tools
+     ├─ StorageKit   URLSession transport, retries & clock skew, S3/OSS dialects, XML, listing, multipart & download engines
+     │   └─ StorageSigning   AWS SigV4, OSS V4/V1, presigning (pure, no I/O)
+     └─ Decompression   streaming gzip (RFC 1952) and Zstandard (RFC 8878) decoders, encoders for saving edits (pure, no I/O)
 ```
 
 - **Provider dialects:** one client implements every operation; a dialect supplies what differs (signing, addressing, header prefixes, storage classes, copy limits, ACL format).
-- **Bounded everything:** XML parsing rejects DTDs and limits size and depth; in-memory bodies are capped; uploads keep at most a fixed amount of part data in memory; downloads stream to disk with `pwrite`.
+- **Bounded everything:** XML parsing rejects DTDs and limits size and depth; in-memory bodies are capped; uploads keep at most a fixed amount of part data in memory; downloads stream to disk with `pwrite`. Previews decode a bounded window (64 KiB in the inspector, 8 MiB at a time and at most 64 MiB in the preview window); gzip headers are capped at 128 KB, a stream that reads 64 MiB without producing output is stopped, and JSON indenting is limited in depth and growth.
 - **Resilience:** retries with exponential backoff and full jitter on throttling and 5xx, automatic clock-skew correction, bucket-region discovery with re-signing, and cancellation that reaches the network task.
 - **Concurrency safety:** Swift 6 strict concurrency, actors for shared state and small unfair locks only on hot paths.
 
